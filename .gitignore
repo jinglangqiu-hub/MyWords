@@ -1,0 +1,13 @@
+.gradle/
+.idea/
+.agents/
+.codex/
+build/
+local.properties
+keystore.properties
+*.iml
+app/build/
+captures/
+*.hprof
+*.jks
+*.keystore
