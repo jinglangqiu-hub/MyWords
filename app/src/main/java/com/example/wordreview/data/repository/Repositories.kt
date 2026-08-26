@@ -13,6 +13,9 @@ import com.example.wordreview.data.local.entity.ReviewResultEntity
 import com.example.wordreview.data.local.entity.ReviewSessionEntity
 import com.example.wordreview.data.local.entity.ReviewSessionWordEntity
 import com.example.wordreview.data.local.entity.WordEntity
+import com.example.wordreview.data.local.entity.WordLibraryEntity
+import com.example.wordreview.data.local.entity.WordLibraryEntryEntity
+import com.example.wordreview.data.local.entity.WordLibrarySummary
 import com.example.wordreview.domain.CsvParser
 import com.example.wordreview.domain.ImportResult
 import com.example.wordreview.domain.MEMORY_RECOGNITION
@@ -35,6 +38,9 @@ class WordRepository(private val db: AppDatabase) {
     suspend fun getWord(id: Long): WordEntity? = db.wordDao().getById(id)
     suspend fun allWords(): List<WordEntity> = db.wordDao().getAllWords()
     suspend fun latestImport(): ImportBatchEntity? = db.importBatchDao().getLatestImport()
+    fun observeLibraries(): Flow<List<WordLibrarySummary>> = db.wordLibraryDao().observeLibraries()
+    fun observeLibraryWords(libraryId: Long): Flow<List<WordEntity>> = db.wordLibraryDao().observeWords(libraryId)
+    suspend fun libraryWords(libraryId: Long): List<WordEntity> = db.wordLibraryDao().getWords(libraryId)
 
     suspend fun updateMeaning(wordId: Long, meaning: String) {
         val word = db.wordDao().getById(wordId) ?: return
@@ -58,7 +64,7 @@ class WordRepository(private val db: AppDatabase) {
 }
 
 class ImportRepository(private val db: AppDatabase, private val contentResolver: ContentResolver) {
-    suspend fun importGoogleTranslateCsv(uri: Uri): ImportResult {
+    suspend fun importGoogleTranslateCsv(uri: Uri, requestedLibraryName: String): ImportResult {
         val text = contentResolver.openInputStream(uri)?.use { input ->
             input.readBytes().toString(Charset.forName("UTF-8"))
         } ?: error("Cannot open selected file")
@@ -67,11 +73,25 @@ class ImportRepository(private val db: AppDatabase, private val contentResolver:
         var totalRows = 0
         var newCount = 0
         var existingCount = 0
+        var addedToLibraryCount = 0
         var updatedMeaningCount = 0
         var failedRowCount = 0
         val now = System.currentTimeMillis()
+        val fileName = displayName(uri)
+        val libraryName = requestedLibraryName.trim().ifBlank {
+            fileName.substringBeforeLast('.').trim().ifBlank { "未命名词库" }
+        }
+        var libraryId = 0L
 
         db.withTransaction {
+            val existingLibrary = db.wordLibraryDao().getByName(libraryName)
+            libraryId = existingLibrary?.id ?: db.wordLibraryDao().insert(
+                WordLibraryEntity(name = libraryName, createdAt = now, updatedAt = now)
+            )
+            if (libraryId <= 0L) {
+                libraryId = db.wordLibraryDao().getByName(libraryName)?.id
+                    ?: error("Cannot create word library")
+            }
             rows.forEach { row ->
                 totalRows++
                 if (row.size < 4) {
@@ -88,8 +108,8 @@ class ImportRepository(private val db: AppDatabase, private val contentResolver:
                 }
                 val normalizedTerm = WordNormalizer.normalizeTerm(displayTerm)
                 val existing = db.wordDao().getByNormalizedTerm(normalizedTerm)
-                if (existing == null) {
-                    val wordId = db.wordDao().insert(
+                val wordId = if (existing == null) {
+                    val insertedId = db.wordDao().insert(
                         WordEntity(
                             normalizedTerm = normalizedTerm,
                             displayTerm = displayTerm,
@@ -100,9 +120,10 @@ class ImportRepository(private val db: AppDatabase, private val contentResolver:
                             updatedAt = now
                         )
                     )
-                    db.memoryStateDao().insert(MemoryStateEntity(wordId = wordId, type = MEMORY_RECOGNITION, dueAt = 0L))
-                    db.memoryStateDao().insert(MemoryStateEntity(wordId = wordId, type = MEMORY_SPELLING, dueAt = 0L))
+                    db.memoryStateDao().insert(MemoryStateEntity(wordId = insertedId, type = MEMORY_RECOGNITION, dueAt = 0L))
+                    db.memoryStateDao().insert(MemoryStateEntity(wordId = insertedId, type = MEMORY_SPELLING, dueAt = 0L))
                     newCount++
+                    insertedId
                 } else {
                     existingCount++
                     val (merged, changed) = WordNormalizer.mergeMeaning(existing.meaningText, translation)
@@ -110,21 +131,38 @@ class ImportRepository(private val db: AppDatabase, private val contentResolver:
                         db.wordDao().update(existing.copy(meaningText = merged, updatedAt = now))
                         updatedMeaningCount++
                     }
+                    existing.id
                 }
+                if (db.wordLibraryDao().addEntry(WordLibraryEntryEntity(libraryId, wordId, now)) != -1L) {
+                    addedToLibraryCount++
+                }
+            }
+            db.wordLibraryDao().getById(libraryId)?.let {
+                db.wordLibraryDao().update(it.copy(updatedAt = now))
             }
             db.importBatchDao().insert(
                 ImportBatchEntity(
-                    fileName = displayName(uri),
+                    fileName = fileName,
                     importedAt = now,
                     totalRows = totalRows,
                     newCount = newCount,
                     existingCount = existingCount,
                     updatedMeaningCount = updatedMeaningCount,
-                    failedRowCount = failedRowCount
+                    failedRowCount = failedRowCount,
+                    libraryId = libraryId
                 )
             )
         }
-        return ImportResult(totalRows, newCount, existingCount, updatedMeaningCount, failedRowCount)
+        return ImportResult(
+            libraryId,
+            libraryName,
+            totalRows,
+            newCount,
+            existingCount,
+            addedToLibraryCount,
+            updatedMeaningCount,
+            failedRowCount
+        )
     }
 
     private fun displayName(uri: Uri): String {
@@ -147,6 +185,7 @@ class ReviewRepository(private val db: AppDatabase) {
 
     data class ActiveSession(
         val sessionId: Long,
+        val libraryId: Long?,
         val currentStage: String,
         val words: List<ReviewWord>,
         val choiceProgress: SavedProgress?,
@@ -157,8 +196,8 @@ class ReviewRepository(private val db: AppDatabase) {
     suspend fun activeSession(): ActiveSession? =
         db.reviewSessionDao().getActiveSession()?.let { loadActiveSession(it) }
 
-    suspend fun startSession(plannedCount: Int): ActiveSession {
-        val words = db.wordDao().getAllWords().filter { it.meaningText.trim().isNotBlank() }
+    suspend fun startSession(libraryId: Long, plannedCount: Int): ActiveSession {
+        val words = db.wordLibraryDao().getWords(libraryId).filter { it.meaningText.trim().isNotBlank() }
         val states = db.memoryStateDao().getStatesByType(MEMORY_RECOGNITION)
         val picked = ReviewScheduler.pick(words, states, plannedCount, System.currentTimeMillis())
         val now = System.currentTimeMillis()
@@ -171,7 +210,8 @@ class ReviewRepository(private val db: AppDatabase) {
                     actualCount = picked.size,
                     status = "active",
                     currentStage = STAGE_CHOICE,
-                    updatedAt = now
+                    updatedAt = now,
+                    libraryId = libraryId
                 )
             )
             db.reviewSessionWordDao().insertAll(
@@ -301,6 +341,7 @@ class ReviewRepository(private val db: AppDatabase) {
         val reviewWords = wordIds.mapNotNull { wordsById[it]?.toReviewWord() }
         return ActiveSession(
             sessionId = session.id,
+            libraryId = session.libraryId,
             currentStage = session.currentStage,
             words = reviewWords,
             choiceProgress = db.reviewProgressDao().get(session.id, STAGE_CHOICE)?.toSavedProgress(),

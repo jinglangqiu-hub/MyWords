@@ -22,6 +22,50 @@ data class WordEntity(
 )
 
 @Entity(
+    tableName = "word_libraries",
+    indices = [Index(value = ["name"], unique = true)]
+)
+data class WordLibraryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val createdAt: Long,
+    val updatedAt: Long
+)
+
+@Entity(
+    tableName = "word_library_entries",
+    primaryKeys = ["libraryId", "wordId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = WordLibraryEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["libraryId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = WordEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["wordId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["wordId"])]
+)
+data class WordLibraryEntryEntity(
+    val libraryId: Long,
+    val wordId: Long,
+    val addedAt: Long
+)
+
+data class WordLibrarySummary(
+    val id: Long,
+    val name: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val wordCount: Int
+)
+
+@Entity(
     tableName = "memory_states",
     foreignKeys = [
         ForeignKey(
@@ -54,7 +98,8 @@ data class ImportBatchEntity(
     val newCount: Int,
     val existingCount: Int,
     val updatedMeaningCount: Int,
-    val failedRowCount: Int
+    val failedRowCount: Int,
+    val libraryId: Long? = null
 )
 
 @Entity(tableName = "review_sessions")
@@ -70,7 +115,8 @@ data class ReviewSessionEntity(
     val choiceMistakes: Int = 0,
     val spellingRounds: Int = 0,
     val spellingMistakes: Int = 0,
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val libraryId: Long? = null
 )
 
 @Entity(

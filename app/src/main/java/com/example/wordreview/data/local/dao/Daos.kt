@@ -13,6 +13,9 @@ import com.example.wordreview.data.local.entity.ReviewResultEntity
 import com.example.wordreview.data.local.entity.ReviewSessionEntity
 import com.example.wordreview.data.local.entity.ReviewSessionWordEntity
 import com.example.wordreview.data.local.entity.WordEntity
+import com.example.wordreview.data.local.entity.WordLibraryEntity
+import com.example.wordreview.data.local.entity.WordLibraryEntryEntity
+import com.example.wordreview.data.local.entity.WordLibrarySummary
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -50,6 +53,55 @@ interface WordDao {
 }
 
 @Dao
+interface WordLibraryDao {
+    @Query(
+        """
+        SELECT l.id, l.name, l.createdAt, l.updatedAt, COUNT(e.wordId) AS wordCount
+        FROM word_libraries l
+        LEFT JOIN word_library_entries e ON e.libraryId = l.id
+        GROUP BY l.id
+        ORDER BY l.updatedAt DESC, l.name ASC
+        """
+    )
+    fun observeLibraries(): Flow<List<WordLibrarySummary>>
+
+    @Query("SELECT * FROM word_libraries WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): WordLibraryEntity?
+
+    @Query("SELECT * FROM word_libraries WHERE name = :name LIMIT 1")
+    suspend fun getByName(name: String): WordLibraryEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(library: WordLibraryEntity): Long
+
+    @Update
+    suspend fun update(library: WordLibraryEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun addEntry(entry: WordLibraryEntryEntity): Long
+
+    @Query(
+        """
+        SELECT w.* FROM words w
+        INNER JOIN word_library_entries e ON e.wordId = w.id
+        WHERE e.libraryId = :libraryId
+        ORDER BY w.updatedAt DESC
+        """
+    )
+    fun observeWords(libraryId: Long): Flow<List<WordEntity>>
+
+    @Query(
+        """
+        SELECT w.* FROM words w
+        INNER JOIN word_library_entries e ON e.wordId = w.id
+        WHERE e.libraryId = :libraryId
+        ORDER BY w.updatedAt DESC
+        """
+    )
+    suspend fun getWords(libraryId: Long): List<WordEntity>
+}
+
+@Dao
 interface MemoryStateDao {
     @Query("SELECT * FROM memory_states WHERE wordId = :wordId AND type = :type LIMIT 1")
     suspend fun getState(wordId: Long, type: String): MemoryStateEntity?
@@ -80,6 +132,9 @@ interface ImportBatchDao {
 
     @Query("SELECT * FROM import_batches ORDER BY importedAt DESC LIMIT 1")
     suspend fun getLatestImport(): ImportBatchEntity?
+
+    @Query("SELECT * FROM import_batches WHERE libraryId = :libraryId ORDER BY importedAt DESC LIMIT 1")
+    suspend fun getLatestImport(libraryId: Long): ImportBatchEntity?
 }
 
 @Dao
