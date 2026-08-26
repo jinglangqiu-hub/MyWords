@@ -8,6 +8,7 @@ import com.example.wordreview.data.local.AppDatabase
 import com.example.wordreview.data.local.entity.ImportBatchEntity
 import com.example.wordreview.data.local.entity.MemoryStateEntity
 import com.example.wordreview.data.local.entity.WordEntity
+import com.example.wordreview.data.local.entity.WordLibrarySummary
 import com.example.wordreview.data.repository.ImportRepository
 import com.example.wordreview.data.repository.ReviewRepository
 import com.example.wordreview.data.repository.WordRepository
@@ -20,6 +21,7 @@ import com.example.wordreview.domain.STAGE_CHOICE
 import com.example.wordreview.domain.STAGE_SPELLING
 import com.example.wordreview.domain.SpellingQuestion
 import com.example.wordreview.domain.WordNormalizer
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +31,7 @@ import kotlinx.coroutines.launch
 
 data class HomeState(
     val wordCount: Int = 0,
+    val libraryCount: Int = 0,
     val dueCount: Int = 0,
     val latestImport: ImportBatchEntity? = null,
     val showUnfinishedReviewDialog: Boolean = false,
@@ -37,12 +40,17 @@ data class HomeState(
 
 data class ImportState(
     val isImporting: Boolean = false,
+    val libraryName: String = "",
+    val selectedLibraryId: Long? = null,
+    val libraries: List<WordLibrarySummary> = emptyList(),
     val result: ImportResult? = null,
     val errorMessage: String? = null
 )
 
 data class LibraryState(
     val query: String = "",
+    val libraries: List<WordLibrarySummary> = emptyList(),
+    val selectedLibraryId: Long? = null,
     val words: List<WordEntity> = emptyList()
 )
 
@@ -56,6 +64,8 @@ data class DetailState(
 
 data class ReviewSetupState(
     val wordCount: Int = 0,
+    val libraries: List<WordLibrarySummary> = emptyList(),
+    val selectedLibraryId: Long? = null,
     val plannedCountInput: String = "30",
     val errorMessage: String? = null
 )
@@ -119,14 +129,36 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var choiceWrongWords: MutableList<ReviewWord> = mutableListOf()
     private var spellingRoundWords: List<ReviewWord> = emptyList()
     private var spellingWrongWords: MutableList<ReviewWord> = mutableListOf()
+    private var libraryWordsJob: Job? = null
+    private var selectedLibraryWordsCache: List<WordEntity> = emptyList()
 
     init {
         viewModelScope.launch {
             words.observeAllWords().collectLatest { list ->
-                allWordsCache = list
-                _library.update { it.copy(words = filterWords(list, it.query)) }
                 _home.update { it.copy(wordCount = list.size) }
-                _setup.update { it.copy(wordCount = list.size) }
+            }
+        }
+        viewModelScope.launch {
+            words.observeLibraries().collectLatest { libraries ->
+                _home.update { it.copy(libraryCount = libraries.size) }
+                _importState.update { state -> state.copy(libraries = libraries) }
+                _library.update { state ->
+                    state.copy(
+                        libraries = libraries,
+                        selectedLibraryId = state.selectedLibraryId?.takeIf { id -> libraries.any { it.id == id } }
+                            ?: libraries.firstOrNull()?.id
+                    )
+                }
+                _setup.update { state ->
+                    val selectedId = state.selectedLibraryId?.takeIf { id -> libraries.any { it.id == id } }
+                        ?: libraries.firstOrNull()?.id
+                    state.copy(
+                        libraries = libraries,
+                        selectedLibraryId = selectedId,
+                        wordCount = libraries.firstOrNull { it.id == selectedId }?.wordCount ?: 0
+                    )
+                }
+                observeSelectedLibraryWords(_library.value.selectedLibraryId)
             }
         }
         refreshHome()
@@ -140,7 +172,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     latestImport = words.latestImport()
                 )
             }
-            _setup.update { it.copy(wordCount = words.countWords()) }
         }
     }
 
@@ -191,23 +222,55 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateImportLibraryName(name: String) {
+        _importState.update { state ->
+            val exact = state.libraries.firstOrNull { it.name == name.trim() }
+            state.copy(libraryName = name, selectedLibraryId = exact?.id, errorMessage = null)
+        }
+    }
+
+    fun selectImportLibrary(libraryId: Long) {
+        val library = _importState.value.libraries.firstOrNull { it.id == libraryId } ?: return
+        _importState.update { it.copy(libraryName = library.name, selectedLibraryId = library.id, errorMessage = null) }
+    }
+
     fun importCsv(uri: Uri) {
         viewModelScope.launch {
-            _importState.value = ImportState(isImporting = true)
-            runCatching { imports.importGoogleTranslateCsv(uri) }
+            val before = _importState.value
+            _importState.value = before.copy(isImporting = true, result = null, errorMessage = null)
+            runCatching { imports.importGoogleTranslateCsv(uri, before.libraryName) }
                 .onSuccess { result ->
-                    _importState.value = ImportState(result = result)
+                    _importState.update {
+                        it.copy(
+                            isImporting = false,
+                            libraryName = result.libraryName,
+                            selectedLibraryId = result.libraryId,
+                            result = result
+                        )
+                    }
                     refreshHome()
                 }
                 .onFailure { error ->
-                    _importState.value = ImportState(errorMessage = "导入失败：请选择有效的谷歌翻译收藏 CSV 文件。")
+                    _importState.update {
+                        it.copy(isImporting = false, errorMessage = "导入失败：请选择有效的谷歌翻译收藏 CSV 文件。")
+                    }
                     error.printStackTrace()
                 }
         }
     }
 
     fun updateSearch(query: String) {
-        _library.update { it.copy(query = query, words = filterWords(allWordsCache, query)) }
+        _library.update { it.copy(query = query, words = filterWords(selectedLibraryWordsCache, query)) }
+    }
+
+    fun selectLibrary(libraryId: Long) {
+        _library.update { it.copy(selectedLibraryId = libraryId, query = "") }
+        observeSelectedLibraryWords(libraryId)
+    }
+
+    fun selectReviewLibrary(libraryId: Long) {
+        val count = _setup.value.libraries.firstOrNull { it.id == libraryId }?.wordCount ?: 0
+        _setup.update { it.copy(selectedLibraryId = libraryId, wordCount = count, errorMessage = null) }
     }
 
     fun loadDetail(wordId: Long) {
@@ -251,7 +314,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun startReview(onChoiceReady: () -> Unit) {
         viewModelScope.launch {
             val count = _setup.value.plannedCountInput.toIntOrNull()
-            val allWords = words.allWords()
+            val libraryId = _setup.value.selectedLibraryId
+            if (libraryId == null) {
+                _setup.update { it.copy(errorMessage = "请先导入并选择一个单词库。") }
+                return@launch
+            }
+            val allWords = words.libraryWords(libraryId)
             val reviewableWords = allWords.filter { it.meaningText.trim().isNotBlank() }
             val reviewableTotal = reviewableWords.size
             when {
@@ -273,7 +341,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             val reviewCount = count ?: return@launch
-            val active = reviews.startSession(reviewCount)
+            val active = reviews.startSession(libraryId, reviewCount)
             sessionId = active.sessionId
             reviewWords = active.words
             allWordsCache = allWords
@@ -452,7 +520,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadActiveSession(active: ReviewRepository.ActiveSession): Boolean {
         sessionId = active.sessionId
         reviewWords = active.words
-        allWordsCache = words.allWords()
+        allWordsCache = active.libraryId?.let { words.libraryWords(it) } ?: words.allWords()
         _summary.value = active.summary
         val choiceProgress = active.choiceProgress ?: ReviewRepository.SavedProgress(1, 0, active.words.map { it.id }, emptyList())
         choiceRoundWords = choiceProgress.roundWordIds.toReviewWords(active.words)
@@ -565,6 +633,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val q = query.trim().lowercase()
         if (q.isBlank()) return words
         return words.filter { it.normalizedTerm.contains(q) || it.meaningText.contains(query.trim()) }
+    }
+
+    private fun observeSelectedLibraryWords(libraryId: Long?) {
+        libraryWordsJob?.cancel()
+        if (libraryId == null) {
+            selectedLibraryWordsCache = emptyList()
+            _library.update { it.copy(words = emptyList()) }
+            return
+        }
+        libraryWordsJob = viewModelScope.launch {
+            words.observeLibraryWords(libraryId).collectLatest { list ->
+                selectedLibraryWordsCache = list
+                _library.update { state -> state.copy(words = filterWords(list, state.query)) }
+            }
+        }
     }
 
     private fun distinctMeaningCount(words: List<WordEntity>): Int =

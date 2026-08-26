@@ -17,7 +17,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -231,6 +233,7 @@ private fun HomeScreen(
     Page("个人生词复习") { modifier ->
         Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             StatCard("总单词数", state.wordCount.toString())
+            StatCard("单词库数量", state.libraryCount.toString())
             StatCard("最近导入", state.latestImport?.let { "${it.newCount} 新增 / ${it.existingCount} 已有" } ?: "暂无")
             Button(onClick = onReview, modifier = Modifier.fillMaxWidth()) { Text("开始复习") }
             state.reviewErrorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -250,14 +253,38 @@ private fun ImportScreen(vm: AppViewModel, onBack: () -> Unit) {
     }
     Page("导入 CSV", onBack) { modifier ->
         Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("导入到单词库", fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = state.libraryName,
+                onValueChange = vm::updateImportLibraryName,
+                label = { Text("单词库名称（留空则使用文件名）") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (state.libraries.isNotEmpty()) {
+                Text("或选择已有单词库")
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(state.libraries, key = { it.id }) { library ->
+                        OutlinedButton(onClick = { vm.selectImportLibrary(library.id) }) {
+                            RadioButton(
+                                selected = state.selectedLibraryId == library.id,
+                                onClick = null,
+                                enabled = false
+                            )
+                            Text("${library.name}（${library.wordCount}）")
+                        }
+                    }
+                }
+            }
             Button(onClick = { launcher.launch(arrayOf("text/*", "text/csv", "application/vnd.ms-excel")) }, enabled = !state.isImporting) {
                 Text(if (state.isImporting) "正在导入" else "选择文件")
             }
             state.result?.let {
                 Text("导入成功", fontWeight = FontWeight.Bold)
+                Text("单词库：${it.libraryName}")
                 Text("总行数：${it.totalRows}")
                 Text("新增单词：${it.newCount}")
                 Text("已有单词：${it.existingCount}")
+                Text("加入本词库：${it.addedToLibraryCount}")
                 Text("更新释义：${it.updatedMeaningCount}")
                 Text("失败行数：${it.failedRowCount}")
             }
@@ -271,13 +298,33 @@ private fun LibraryScreen(vm: AppViewModel, onBack: () -> Unit, onDetail: (Long)
     val state by vm.library.collectAsState()
     Page("单词库", onBack) { modifier ->
         Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (state.libraries.isEmpty()) {
+                Text("暂无单词库，请先导入 CSV。")
+            } else {
+                Text("选择单词库", fontWeight = FontWeight.Bold)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(state.libraries, key = { it.id }) { library ->
+                        OutlinedButton(onClick = { vm.selectLibrary(library.id) }) {
+                            RadioButton(
+                                selected = state.selectedLibraryId == library.id,
+                                onClick = null,
+                                enabled = false
+                            )
+                            Text("${library.name}（${library.wordCount}）")
+                        }
+                    }
+                }
+            }
             OutlinedTextField(
                 value = state.query,
                 onValueChange = vm::updateSearch,
                 label = { Text("搜索英文或中文释义") },
                 modifier = Modifier.fillMaxWidth()
             )
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 items(state.words, key = { it.id }) { word ->
                     WordRow(word, onClick = { onDetail(word.id) })
                 }
@@ -321,7 +368,23 @@ private fun ReviewSetupScreen(vm: AppViewModel, onBack: () -> Unit, onChoice: ()
     val state by vm.setup.collectAsState()
     Page("复习设置", onBack) { modifier ->
         Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("当前词库：${state.wordCount} 个单词")
+            Text("选择本次学习的单词库", fontWeight = FontWeight.Bold)
+            if (state.libraries.isEmpty()) {
+                Text("暂无单词库，请先导入 CSV。")
+            }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(state.libraries, key = { it.id }) { library ->
+                    OutlinedButton(onClick = { vm.selectReviewLibrary(library.id) }) {
+                        RadioButton(
+                            selected = state.selectedLibraryId == library.id,
+                            onClick = null,
+                            enabled = false
+                        )
+                        Text("${library.name}（${library.wordCount}）")
+                    }
+                }
+            }
+            Text("当前选中：${state.wordCount} 个单词")
             OutlinedTextField(
                 value = state.plannedCountInput,
                 onValueChange = vm::updatePlannedCount,

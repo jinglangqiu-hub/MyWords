@@ -12,9 +12,12 @@ const val STAGE_SPELLING = "spelling"
 private const val ONE_DAY_MS = 24L * 60L * 60L * 1000L
 
 data class ImportResult(
+    val libraryId: Long,
+    val libraryName: String,
     val totalRows: Int,
     val newCount: Int,
     val existingCount: Int,
+    val addedToLibraryCount: Int,
     val updatedMeaningCount: Int,
     val failedRowCount: Int
 )
