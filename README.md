@@ -1,374 +1,298 @@
-# Personal Word Review
+# MyWords
 
-Personal Word Review 是一个安卓本地生词复习软件，主要面向从谷歌翻译收藏夹导出的 CSV 单词表。它不需要账号，不依赖云同步，核心数据保存在手机本地，适合把自己长期积累的英文生词导入后反复复习。
+MyWords 是一款原生 Android 本地生词复习应用，面向从 Google 翻译收藏等来源导出的四列 CSV 单词表。它支持多个独立词库、识别与拼写两阶段复习、跨词库共享记忆、未完成进度恢复，以及 Android 系统文字转语音（TTS）。
 
-## 技术路线
+应用本身不要求账号，也不声明 `INTERNET` 权限。单词、词库和复习记录保存在手机的 Room/SQLite 数据库中。
 
-- 客户端：原生 Android 应用。
-- 语言和界面：Kotlin + Jetpack Compose + Material 3。
-- 数据存储：Room / SQLite，本地保存多个独立词库、导入记录、复习记录、未完成复习进度和共享记忆状态。
-- 复习逻辑：识别题和拼写题分开记录记忆状态，按到期、遗忘次数、连续正确次数选择本次复习单词。
-- CSV 解析：支持 UTF-8/BOM、UTF-16、GB18030、标准引号字段、空行和常见中英文表头。
-- 发音：优先兼容手机当前的 Android 系统 TextToSpeech 默认英文语音；在可用时再选择高质量离线 voice，并显示引擎、voice、离线/网络类型和具体播放错误。
-- 网络权限：当前应用不声明 `INTERNET` 权限，核心功能离线可用。
-- 备份策略：应用显式禁用 Android 云备份，并排除数据库、配置和文件的系统备份/设备迁移。
-- 构建方式：Gradle Wrapper，当前验证基线为 Android Gradle Plugin 8.7.3 + Gradle 8.9。
+## 当前开发状态
 
-## 软件使用指南
+截至 2026-08-27，仓库 `main` 分支对应的应用版本为 **v1.1.2**（`versionCode 4`，数据库版本 3）。
 
-### 1. 先准备单词 CSV
+| 项目 | 当前情况 |
+| --- | --- |
+| 可安装版本 | [MyWords v1.1.2](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/tag/v1.1.2) 已发布，提供正式签名 APK |
+| 支持系统 | MyWords 最低 Android 8.0（API 26），目标 Android 15（API 35） |
+| 已实现 | 多词库管理、按词库导入/更新、词条搜索和释义编辑、双阶段复习、错题循环、进度恢复/重开/跳过、共享复习记忆、记忆重置、系统 TTS 诊断、软件内置拼写键盘 |
+| 最近验证记录 | 2026-08-27：6 个 JVM 单元测试全部通过，`lintDebug` 为 `No issues found`，Debug、AndroidTest 和正式签名 Release APK 均已生成；发布 APK 的哈希与下方记录一致 |
+| 自动化检查范围 | JVM 单元测试覆盖 CSV、调度和干扰项；Android 测试覆盖数据库迁移、记忆重置、幂等保存、会话清理和 TTS voice 排序 |
+| 验证边界 | 当前电脑没有连接 Android 设备，也没有配置 AVD，因此 Android 设备测试尚未实际执行，不能据此声称已经完成所有机型上的视觉、触控和真实语音验收 |
 
-本软件按“谷歌翻译收藏导出 CSV”的格式设计。CSV 每行使用 4 列；支持 UTF-8、带 BOM 的 UTF-8/UTF-16 和 GB18030，也可以包含可识别的中英文表头：
+### 已知边界
+
+- 当前仅支持**逗号分隔、固定四列**的 CSV；不直接读取 XLSX、TSV，也没有导入列映射界面。
+- 复习数量可以超过当前已到期词数；此时算法会继续选取尚未到期但优先级最高的词。
+- 选择题必须能找到两个不同的错误释义，因此所选词库至少需要 3 个不同的非空释义。
+- 数据只存于应用本地；当前没有账号同步、数据库导出或自动云备份。应用还显式关闭了 Android 云备份和设备迁移。卸载前请保留原始 CSV。
+- 仓库未配置应用商店发布流程，目前通过 GitHub Releases 分发 APK。
+
+## 下载和安装
+
+### 直接下载
+
+- 最新版本：[下载 MyWords v1.1.2 APK](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/download/v1.1.2/app-release.apk)
+- 全部版本：[GitHub Releases](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases)
+- v1.1.2 APK SHA-256：`0cfddf399b507be50cd08f0bcb9fcc3a367eb9872ba2a105093aad4ad4a60f72`
+
+建议从 Releases 页面进入下载，并确认域名和仓库为 `github.com/jinglangqiu-hub/PersonalWordReviewApp`。
+
+### 安装步骤
+
+1. 在 Android 手机上下载 `app-release.apk`，或先在电脑下载后传到手机。
+2. 用浏览器或文件管理器打开 APK。
+3. 如果系统阻止安装，按提示允许当前浏览器或文件管理器“安装未知应用”。
+4. 返回安装页面完成安装，然后打开 **MyWords**。
+
+Android 对侧载 APK 的风险提示是正常行为。后续版本必须继续使用同一签名，且 `versionCode` 不能低于手机上已安装的版本；不要卸载旧版本后再升级，否则本地数据会一并删除。
+
+## 建议配合 SherpaTTS 使用
+
+MyWords 通过 Android 标准 `TextToSpeech` API 调用**系统当前选中的 TTS 引擎**，并没有把语音模型打包进 APK。若手机原有英文语音效果不理想，建议安装开源的 [SherpaTTS](https://github.com/woheller69/ttsengine)。它基于 sherpa-onnx，使用 Piper 或 Coqui voice；模型下载完成后可以离线合成。
+
+推荐配置流程：
+
+1. 从 [F-Droid 的 SherpaTTS 页面](https://f-droid.org/packages/org.woheller69.ttsengine/) 安装 SherpaTTS。F-Droid 当前版本要求 Android 10 或更高；Android 8/9 用户需要继续使用设备自带或其他兼容 TTS 引擎。
+2. 首次打开 SherpaTTS，在 **Manage Languages** 中下载一个英文 voice。此步骤需要联网，模型文件可能较大。
+3. 进入 Android 系统的“文字转语音输出”设置，将 **SherpaTTS** 设为首选引擎，并试听英文语音。
+4. 回到 MyWords，打开首页的“语音设置”，点击“重新检测”。检测信息中应能看到 SherpaTTS 的引擎包、英文 locale 和离线 voice 状态。
+5. 在选择题或拼写题点击“发音”测试。
+
+MyWords 自身仍然不联网；SherpaTTS 的模型下载和存储由 SherpaTTS 独立负责。如果已经下载模型但没有声音，依次检查系统媒体音量、系统默认 TTS 引擎、英文 voice 是否安装，以及 MyWords“语音设置”中的错误信息。
+
+## CSV 准备与导入
+
+### 文件格式
+
+每条记录使用下面四列。应用只读取前四列：
+
+| 列 | 内容 | 示例 |
+| --- | --- | --- |
+| 1 | 源语言 | `英语` |
+| 2 | 目标语言 | `中文（简体）` |
+| 3 | 英文单词或短语 | `auction` |
+| 4 | 中文释义 | `拍卖` |
+
+可以使用无表头文件：
 
 ```csv
 英语,中文（简体）,auction,拍卖
 英语,中文（简体）,stunned,目瞪口呆
-英语,中文（简体）,floating,漂浮
+英语,中文（简体）,take off,起飞
 ```
 
-4 列含义如下：
-
-| 列号 | 内容 | 示例 |
-| --- | --- | --- |
-| 第 1 列 | 源语言 | 英语 |
-| 第 2 列 | 目标语言 | 中文（简体） |
-| 第 3 列 | 英文单词或短语 | auction |
-| 第 4 列 | 中文释义 | 拍卖 |
-
-使用前建议：
-
-- 优先使用 UTF-8；软件也支持带 BOM 的 UTF-8/UTF-16 和 GB18030。
-- 可以不带表头；如保留表头，请使用常见的中英文列名。
-- 每一行至少有 4 列。
-- 第 3 列英文不能为空。
-- 第 4 列中文释义不能为空。
-- 如果释义里本身有逗号，建议用标准 CSV 引号包起来，例如 `"震惊, 惊呆"`。
-
-导入时，软件会自动做这些事：
-
-- 空行会被跳过。
-- 缺列、空单词、空释义会计入失败行数。
-- 英文会按 trim、小写、合并连续空格后的标准形式去重。
-- 重复导入同一个单词，不会重复创建。
-- 同一个单词遇到新释义，会用中文分号 `；` 追加。
-
-### 2. 从 GitHub 下载 APK
-
-软件安装包放在 GitHub Release 里，不需要自己编译源码。
-
-下载步骤：
-
-1. 打开项目发布页：[Personal Word Review Releases](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases)。
-2. 找到最新版本，例如 `Personal Word Review v1.0.0`。
-3. 在该版本下面找到 `Assets` 区域。
-4. 点击 `app-release.apk` 下载安卓安装包。
-5. 如果只是想直接下载当前已发布的 v1.0.0，可以点这个链接：[app-release.apk](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/download/v1.0.0/app-release.apk)。
-
-手机上下载时的提示：
-
-- 如果浏览器提示 APK 可能有风险，这是安卓对非应用商店安装包的常规提醒。
-- 请确认下载来源是 `github.com/jinglangqiu-hub/PersonalWordReviewApp`。
-- 下载完成后，文件名通常是 `app-release.apk`。
-
-### 3. 安装 APK
-
-如果你已经拿到 APK 文件：
-
-1. 把 APK 发送到安卓手机，例如通过微信文件传输、数据线、网盘或系统文件管理器。
-2. 在手机上点开 APK。
-3. 如果系统提示“禁止安装未知来源应用”，进入系统提示页，允许当前文件管理器或浏览器安装应用。
-4. 返回安装界面，点击“安装”。
-5. 安装完成后，在桌面或应用列表里打开 Personal Word Review。
-
-第一次打开后，软件本身不需要登录，也不需要联网权限。
-
-### 4. 配置英文发音
-
-软件使用手机系统自带的 TextToSpeech 发音能力。打开首页后，可以进入“语音设置”查看状态。
-
-建议第一次使用时这样做：
-
-1. 点击首页的“语音设置”。
-2. 进入手机系统的文字转语音设置。
-3. 选择一个可用的英文 TTS 引擎。
-4. 如果系统提示缺少语音数据，安装英文语音包。
-5. 回到软件首页。
-6. 如果状态仍然异常，点击语音状态区域里的重试入口。
-
-如果手机没有英文 TTS：
-
-- 复习仍然可以继续。
-- “发音”按钮可能没有声音。
-- 题目不会因为发音不可用而被阻塞。
-
-### 5. 导入单词
-
-1. 打开软件首页，点击“管理单词库 / 导入”。
-2. 新建词库，或在已有词库上点击“导入/更新”。
-3. 点击“选择文件”。
-4. 在系统文件选择器里找到你的 CSV 文件。
-5. 选中文件后，软件会自动开始导入。
-6. 等待导入结果出现。
-
-导入成功后，你会看到：
-
-- 总行数：本次读取到的 CSV 行数。
-- 新增单词：第一次导入的新单词数量。
-- 已有单词：之前已经存在的单词数量。
-- 更新释义：已有单词里新增了释义的数量。
-- 失败行数：格式不合格、空单词或空释义的行数。
-
-如果失败行数很多，优先检查表头列名是否可识别、文件编码是否受支持、是否每行都有 4 列。
-
-### 6. 查看和管理单词库
-
-1. 回到首页，点击“管理单词库 / 导入”。
-2. 可以新建、重命名或删除词库，也可以单独更新任意词库。
-3. 点击词库的“查看”，在顶部搜索框输入英文或中文释义。
-4. 点击任意单词进入详情页。
-
-同一个英文词可以同时属于多个词库，各词库的显示形式和释义互不影响；复习间隔、遗忘次数、连续正确次数和“不再拼写”设置在所有词库间共享。
-
-在单词详情页可以做这些事：
-
-- 查看英文单词。
-- 编辑中文释义。
-- 点击“保存释义”保存修改。
-- 勾选“不再进入拼写阶段”，让这个单词以后只做识别题，不做拼写题。
-- 查看识别和拼写两个维度的记忆状态，包括遗忘次数和连续正确次数。
-
-适合勾选“不再进入拼写阶段”的情况：
-
-- 单词很长，但你只想认得它。
-- 词组不适合逐字拼写。
-- 这个词只需要阅读理解，不需要主动书写。
-
-### 7. 开始一次复习
-
-1. 回到首页。
-2. 点击“开始复习”。
-3. 选择这次要学习的一个词库。
-4. 在“本次复习数量”里输入想复习的单词数。
-5. 点击“开始复习”。
-
-软件会从词库中挑选本次要复习的单词。挑选时会优先考虑：
-
-- 已到期或从未复习的单词。
-- 遗忘次数更多的单词。
-- 连续正确次数较少的单词。
-- 较早更新的单词。
-
-如果开始复习时报错，常见原因是词库里还没有足够单词。选择题需要至少 3 个不同中文释义才能生成干扰选项。
-
-### 8. 做选择题
-
-选择题阶段会显示英文单词，并给出 3 个中文释义选项。
-
-操作方式：
-
-1. 看英文单词。
-2. 需要听发音时，点击“发音”。
-3. 在 3 个中文释义中选择一个。
-4. 软件会立即显示对错和正确答案。
-5. 点击“下一个”进入下一题。
-
-规则说明：
-
-- 答对的单词会进入更长的复习间隔。
-- 答错的单词会记录一次遗忘。
-- 本轮答错的单词会进入下一轮继续复习。
-- 直到本阶段没有错题，才进入拼写阶段。
-
-### 9. 做拼写题
-
-拼写题阶段会显示中文释义，你需要输入对应英文。
-
-操作方式：
-
-1. 看中文释义。
-2. 需要听发音时，点击“发音”。
-3. 使用页面下方的软件内置键盘输入英文拼写；拼写阶段不会调用系统输入法。
-4. 点击键盘下方的“提交”。
-5. 查看对错和正确答案。
-6. 点击“下一题”继续。
-
-拼写判断规则：
-
-- 会忽略首尾空格。
-- 会统一转成小写。
-- 会把连续多个空格合并成一个空格。
-- 内置键盘采用简洁的 QWERTY 字母布局，支持空格、连字符、撇号、句点、退格和清空。
-- 其他内容必须和标准英文完全一致。
-
-例如，单词标准形式是 `take off`：
-
-- `Take Off` 可以通过。
-- ` take   off ` 可以通过。
-- `takeoff` 不能通过。
-
-如果某个单词不适合拼写：
-
-1. 在拼写题页面点击“该单词不再拼写”。
-2. 之后这个单词不会再进入拼写阶段。
-3. 它仍然可以继续出现在选择题里。
-
-### 10. 查看复习结果
-
-完成一次复习后，会进入“复习结果”页面。这里会显示：
-
-- 本次实际复习单词数。
-- 选择题轮数。
-- 选择题错误次数。
-- 拼写题轮数。
-- 拼写错误次数。
-
-看完后点击“完成”，回到首页。
-
-### 11. 处理中途退出或未完成复习
-
-如果复习中途退出软件，下次进入首页时会弹出“有未完成的复习”。
-
-你有 3 个选择：
-
-| 选项 | 适合什么时候用 | 结果 |
-| --- | --- | --- |
-| 继续进度 | 只是临时退出，想接着做 | 回到上次未完成的位置 |
-| 重新开始 | 上次状态不理想，想重做同一批词 | 回滚本次复习造成的记忆状态变化，然后从头开始 |
-| 跳过 | 不想继续上次这批词 | 回滚本次复习造成的记忆状态变化，并结束这次未完成复习 |
-
-简单理解：
-
-- 想接着做，选“继续进度”。
-- 想这批词重做，选“重新开始”。
-- 想放弃这次，选“跳过”。
-
-### 12. 重置复习记忆
-
-如果希望所有单词重新按首次学习处理，可以在首页点击“重置我的复习记忆”。确认后会清除：
-
-- 复习间隔和下次到期时间。
-- 遗忘次数和连续正确次数。
-- 未完成的复习进度。
-
-词库、单词、释义、导入记录以及“不再拼写”设置不会被删除。此操作无法撤销。
-
-### 13. 日常推荐使用流程
-
-第一次使用：
-
-1. 准备谷歌翻译收藏 CSV。
-2. 从 GitHub Release 下载 APK。
-3. 安装 APK。
-4. 打开软件。
-5. 检查语音设置。
-6. 导入 CSV。
-7. 进入单词库，抽查几个单词和释义。
-8. 回首页开始复习。
-
-每天使用：
-
-1. 打开软件。
-2. 看首页“总单词数”和“最近导入”。
-3. 点击“开始复习”。
-4. 输入今天想复习的数量，例如 20、30 或 50。
-5. 先做选择题，再做拼写题。
-6. 完成后看结果。
-
-新增单词后：
-
-1. 从谷歌翻译导出新的 CSV。
-2. 在软件里再次导入。
-3. 重复单词不会重复创建。
-4. 新释义会自动合并。
-
-## 常见问题
-
-### 为什么导入后单词数量比 CSV 行数少？
-
-因为软件会按标准化英文去重。同一个单词重复出现，只会保留一个词条。
-
-### 为什么有些行导入失败？
-
-常见原因：
-
-- CSV 表头使用了无法识别的列名。
-- 某一行少于 4 列。
-- 英文单词为空。
-- 中文释义为空。
-- 文件编码不是 UTF-8、UTF-16 或 GB18030。
-- CSV 引号或逗号格式不规范。
-
-### 为什么选择题提示题目生成失败？
-
-选择题需要至少 3 个不同的中文释义。请先导入更多单词，或检查词库里是否很多词的释义完全相同。
-
-### 为什么没有声音？
-
-软件调用的是系统 TextToSpeech。请检查：
-
-- 手机是否安装了 TTS 引擎。
-- 是否安装了英文语音数据。
-- 系统音量是否打开。
-- 首页语音状态是否正常。
-- 点击“语音设置”后重新选择英文语音。
-
-### 软件会上传我的单词吗？
-
-不会。当前应用不声明联网权限，单词、复习记录和记忆状态都保存在手机本地。
-
-### 卸载软件后数据还在吗？
-
-通常卸载应用会删除本地数据库。卸载前请确认你仍然保留原始 CSV 文件，方便以后重新导入。
-
-## 开发和构建
-
-本仓库是 Android Studio / Gradle 项目源码。命令行构建需要本机安装 Android Studio 或 Android SDK，并可访问 Android Gradle Plugin 所需 Maven 仓库。
-
-在 Windows PowerShell 中可使用 Android Studio 自带 JBR：
-
-```powershell
-$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
-$env:PATH="$env:JAVA_HOME\bin;$env:PATH"
-.\gradlew.bat :app:assembleDebug
+也可以把可识别表头放在第一行：
+
+```csv
+源语言,目标语言,英文,释义
+英语,中文（简体）,auction,拍卖
 ```
 
-构建 Release APK（存在本地签名配置时自动生成正式签名包）：
+解析器当前支持：
 
-```powershell
-$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
-$env:PATH="$env:JAVA_HOME\bin;$env:PATH"
-.\gradlew.bat :app:assembleRelease
-```
+- UTF-8、带 BOM 的 UTF-8、UTF-16LE、UTF-16BE，以及 UTF-8 解码失败时的 GB18030 回退。
+- 标准 CSV 双引号、字段内逗号、双引号转义和引号字段内换行。
+- 空行跳过；缺列、英文为空、释义为空、引号未闭合会计入失败统计，并显示部分失败行号。
 
-生成文件位置：
+### 去重和更新规则
+
+英文会先执行 `trim → 合并连续空白 → lowercase`，得到全局唯一的 `normalizedTerm`。例如 ` Take   Off ` 与 `take off` 会被视为同一个词。
+
+- 同一个英文可以同时加入多个词库。
+- 各词库分别保存该词在本词库中的显示形式、语言和释义。
+- 同一词库再次导入相同英文时不会重复建项；新释义会用中文分号 `；` 追加，完全相同的释义不会重复追加。
+- 识别/拼写记忆和“不再拼写”设置绑定到全局单词，因此在所有词库间共享。
+- 删除词库后，只属于该词库的单词会成为孤立词并被清理；仍属于其他词库的单词和共享记忆会保留。
+
+### 导入步骤
+
+1. 首页点击“管理单词库 / 导入”。
+2. 新建词库，或在已有词库旁点击“导入/更新”。
+3. 点击“选择文件”，通过 Android 系统文件选择器选择 CSV。
+4. 查看导入结果中的总行数、新增、已有、释义更新、失败原因、示例行号和检测编码。
+5. 进入词库，用英文或中文搜索并抽查释义。
+
+这里的“新增单词”指**新加入当前词库**的数量；该英文可能已经存在于另一个词库。
+
+## 日常使用
+
+### 管理词库和词条
+
+- 可以新建、重命名和删除词库，至少保留一个词库。
+- 可以单独更新任意词库；导入记录会关联到目标词库。
+- 词条详情支持编辑当前词库的释义。
+- “不再进入拼写阶段”是全局设置，适合只需阅读识别的长词、短语或专有名词。
+
+### 开始复习
+
+1. 首页点击“开始复习”。
+2. 选择一个词库。
+3. 输入本次复习数量；数量不能大于该词库中带非空释义的单词数。
+4. 先完成选择题，再完成拼写题。
+
+选择题显示英文和 3 个中文释义；拼写题显示中文释义，并通过软件内置 QWERTY 键盘输入英文。拼写阶段的输入框为只读，不会拉起系统输入法；键盘支持字母、空格、连字符、撇号、句点、退格和清空。
+
+每个阶段中，答错词会进入下一轮，直到本阶段没有错题。完成后会显示实际复习数量、两个阶段的轮数和错误次数。
+
+### 中途退出
+
+应用持久化当前阶段、轮次、题目位置和错题集合。下次打开时可以：
+
+| 操作 | 结果 |
+| --- | --- |
+| 继续进度 | 从保存位置继续 |
+| 重新开始 | 回滚这次未完成会话对记忆状态的修改，然后重做同一批词 |
+| 跳过 | 回滚记忆修改并把该会话标记为已放弃 |
+
+“重置我的复习记忆”会清除全部单词的间隔、到期时间、遗忘次数、连续正确次数，并放弃未完成进度；词库、词条、释义、导入记录和“不再拼写”设置保留。
+
+## 复习算法
+
+这是一套面向当前应用流程的自定义间隔复习算法，不应表述为标准 SM-2 的完整实现。
+
+### 1. 两套共享记忆
+
+每个全局单词分别维护：
+
+- `recognition`：选择题记忆。
+- `spelling`：拼写题记忆。
+
+状态包含 `easeFactor`、`intervalDays`、`dueAt`、`lapseCount`、`successStreak` 和 `lastReviewedAt`。同一英文出现在多个词库时复用这两套状态；当前选词排序只读取 `recognition` 状态。
+
+### 2. 本次选词
+
+对所选词库中有非空释义的词计算优先级：
 
 ```text
-app/build/outputs/apk/release/app-release.apk
+priority = dueBoost + lapseCount × 10,000 - successStreak × 1,000
+dueBoost = 1,000,000  （从未复习或已经到期）
+           0          （尚未到期）
 ```
 
-没有 `keystore.properties` 时只会生成 `app-release-unsigned.apk`，不能直接作为正式安装包分发。不要把 keystore、签名密码、`local.properties`、`keystore.properties` 提交到仓库。
+按 `priority` 从高到低排序；分数相同则优先选择在该词库中更早更新的词，最后截取用户要求的数量。因此整体顺序是：到期/新词优先，其次偏向遗忘更多、连续答对更少的词。
 
-正式打包前建议先执行完整门禁：
+### 3. 记忆更新
+
+初始 `easeFactor = 2.5`，`intervalDays = 0`。
+
+答对时：
+
+```text
+连续答对 1 次：间隔 1 天
+连续答对 2 次：间隔 3 天
+连续答对 3 次及以后：max(5, floor(旧间隔 × 旧 easeFactor)) 天
+easeFactor = min(3.0, easeFactor + 0.08)
+```
+
+答错时：
+
+```text
+间隔重置为 1 天
+easeFactor = max(1.3, easeFactor - 0.2)
+lapseCount += 1
+successStreak = 0
+```
+
+每次回答都会写入对应阶段的记忆；同一会话的错题在后续轮次再次回答时也会继续更新。
+
+### 4. 选择题干扰项
+
+每题需要两个不同释义作为干扰项。算法先比较目标词与候选词的标准化英文，综合以下信号选择视觉拼写最相似的词：
+
+- Damerau-Levenshtein 编辑距离，包括相邻字符换位。
+- 字符 bigram 的 Dice 相似度。
+- 公共前缀、公共后缀、长度接近程度和首字母相同奖励。
+
+选出的两个释义与正确释义再随机打乱。这样会优先生成更容易混淆、但释义仍互不相同的选项。
+
+### 5. 拼写判定
+
+用户答案使用与导入相同的标准化规则：忽略首尾空白、忽略大小写、把连续空白合并成一个。除此之外必须完全一致。
+
+例如标准答案是 `take off`：`Take Off` 和 ` take   off ` 可通过，`takeoff` 不通过。
+
+## 技术路径
+
+```mermaid
+flowchart LR
+    UI[Jetpack Compose / Material 3] --> VM[AppViewModel + StateFlow]
+    VM --> WR[Word / Import Repository]
+    VM --> RR[Review Repository]
+    WR --> DB[(Room / SQLite)]
+    RR --> DB
+    VM --> TTS[Android TextToSpeech API]
+    TTS --> Engine[系统 TTS / SherpaTTS]
+```
+
+| 层 | 实现 |
+| --- | --- |
+| UI | 单 Activity，Jetpack Compose，Navigation Compose，Material 3 |
+| 状态 | `AndroidViewModel`、Kotlin Coroutines、`StateFlow` |
+| 数据 | Room 2.6.1 / SQLite；DAO + Repository；数据库 schema 3，提供 1→2、2→3 迁移 |
+| 构建 | Kotlin 1.9.24、KSP 1.9.24-1.0.20、AGP 8.7.3、Gradle Wrapper 8.9、JVM target 17 |
+| Android | `minSdk 26`、`targetSdk 35`、`compileSdk 35` |
+| 语音 | Android `TextToSpeech`；优先可用的已安装离线英文 voice，失败时回退到引擎兼容模式并显示诊断 |
+| 隐私 | Manifest 不含 `INTERNET`；`allowBackup=false`，备份/设备迁移规则排除数据库、配置和文件 |
+
+核心数据库关系：
+
+- `words` 保存按标准化英文唯一的全局词身份。
+- `word_libraries` 与 `library_words` 建立多对多词库关系，并允许每个词库保存自己的释义。
+- `memory_states` 以 `(wordId, type)` 唯一，构成跨词库共享记忆。
+- `review_sessions`、`review_progress`、`review_results` 保存会话、断点和作答。
+- `review_memory_snapshots` 保存会话开始前的记忆快照，用于重开或跳过时回滚。
+
+## 源码构建与调试
+
+### Android Studio
+
+1. 安装 Android Studio 和 Android SDK 35。
+2. 克隆仓库并在 Android Studio 中打开根目录。
+3. 等待 Gradle Sync 完成。
+4. 选择 `app` 的 Debug 配置和一台 Android 8.0+ 设备/模拟器，点击 Run。
+
+### Windows PowerShell
+
+可使用 Android Studio 自带 JBR：
 
 ```powershell
-.\gradlew.bat testDebugUnitTest lintDebug assembleDebug assembleAndroidTest assembleRelease
+$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
+$env:PATH = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:PATH"
+
+.\gradlew.bat testDebugUnitTest lintDebug assembleDebug assembleAndroidTest --no-daemon
 ```
 
-如需由 Gradle 直接生成已签名 APK，请将 `keystore.properties.example` 复制为 `keystore.properties`，填写真实签名文件和密码后再执行 `assembleRelease`。签名配置存在时输出为 `app-release.apk`；未配置时只会生成 `app-release-unsigned.apk`。签名文件和密码配置都已被 `.gitignore` 排除，不要提交到 Git。
+Debug APK 输出：
 
-当前正式签名身份（2026-08-27 新建）：
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
 
-- 密钥别名：`wordreview-release`
-- 证书主体：`CN=QIU, OU=CQU, O=CQU, L=CHONGQING, ST=CHONGQING, C=CN`
-- 证书 SHA-256：`569c226d9a270d169c7ded6bbb9a08e7f1639a5ae14299aa012effbaaf9b05bd`
-- 本地密钥：`release-key.jks`
-- 本地密码配置：`keystore.properties`
+`assembleAndroidTest` 只编译设备测试 APK；真正执行 `connectedDebugAndroidTest` 需要已连接设备或正在运行的 AVD。
 
-必须将 `release-key.jks` 与 `keystore.properties` 一起备份到至少两个加密且相互独立的位置。二者均不可重新生成、不可提交到 Git；后续版本必须持续使用同一密钥，否则无法覆盖安装当前版本。`scripts/create_release_keystore.ps1` 只用于首次创建，并会拒绝覆盖已有密钥。
+### Release 签名
 
-## 版本信息
+仓库不包含发布密钥。没有 `keystore.properties` 时，`assembleRelease` 只会生成未签名 APK；正式分发必须使用项目维护者保存的同一发布密钥。
 
-- versionCode: 4
-- versionName: 1.1.2
-- 当前定位：本地离线生词复习工具
-- APK 体积目标：小于 30MB
+首次建立自己的发布身份时，可以复制 `keystore.properties.example` 手动配置，或审阅后运行：
+
+```powershell
+.\scripts\create_release_keystore.ps1
+.\gradlew.bat assembleRelease --no-daemon
+```
+
+脚本会拒绝覆盖已有密钥。`*.jks`、`*.keystore` 和 `keystore.properties` 已被 `.gitignore` 排除；请将密钥和密码配置分别备份到至少两个加密且相互独立的位置。丢失原密钥后，新 APK 将无法覆盖安装原签名版本。
+
+## 主要源码位置
+
+```text
+app/src/main/java/com/example/wordreview/
+├── MainActivity.kt                 # Compose 页面、导航和软件内置键盘
+├── ui/AppViewModel.kt              # 页面状态、复习流程和断点恢复
+├── domain/Core.kt                  # CSV、标准化、选词、干扰项和记忆算法
+├── data/local/                     # Room 数据库、Entity、DAO 和迁移
+├── data/repository/Repositories.kt # 词库、导入和复习事务
+└── tts/TtsManager.kt               # 系统 TTS 选择、诊断、发音和重试
+```
+
+项目仓库：[jinglangqiu-hub/PersonalWordReviewApp](https://github.com/jinglangqiu-hub/PersonalWordReviewApp)
