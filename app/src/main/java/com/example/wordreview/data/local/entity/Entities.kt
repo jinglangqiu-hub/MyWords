@@ -1,6 +1,7 @@
 package com.example.wordreview.data.local.entity
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -18,6 +19,67 @@ data class WordEntity(
     val meaningText: String,
     val spellingDisabled: Boolean = false,
     val createdAt: Long,
+    val updatedAt: Long
+)
+
+@Entity(
+    tableName = "word_libraries",
+    indices = [Index(value = ["normalizedName"], unique = true)]
+)
+data class WordLibraryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val normalizedName: String,
+    val createdAt: Long,
+    val updatedAt: Long
+)
+
+@Entity(
+    tableName = "library_words",
+    primaryKeys = ["libraryId", "wordId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = WordLibraryEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["libraryId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = WordEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["wordId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["wordId"])]
+)
+data class LibraryWordEntity(
+    val libraryId: Long,
+    val wordId: Long,
+    val displayTerm: String,
+    val sourceLang: String,
+    val targetLang: String,
+    val meaningText: String,
+    val addedAt: Long,
+    val updatedAt: Long
+)
+
+data class WordLibrarySummary(
+    val id: Long,
+    val name: String,
+    val wordCount: Int,
+    val updatedAt: Long
+)
+
+data class LibraryWordEntry(
+    val wordId: Long,
+    val normalizedTerm: String,
+    val displayTerm: String,
+    val sourceLang: String,
+    val targetLang: String,
+    val meaningText: String,
+    val spellingDisabled: Boolean,
+    val addedAt: Long,
     val updatedAt: Long
 )
 
@@ -45,7 +107,7 @@ data class MemoryStateEntity(
     val lastReviewedAt: Long? = null
 )
 
-@Entity(tableName = "import_batches")
+@Entity(tableName = "import_batches", indices = [Index(value = ["libraryId"])])
 data class ImportBatchEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val fileName: String,
@@ -54,10 +116,11 @@ data class ImportBatchEntity(
     val newCount: Int,
     val existingCount: Int,
     val updatedMeaningCount: Int,
-    val failedRowCount: Int
+    val failedRowCount: Int,
+    @ColumnInfo(defaultValue = "1") val libraryId: Long = 1L
 )
 
-@Entity(tableName = "review_sessions")
+@Entity(tableName = "review_sessions", indices = [Index(value = ["libraryId"])])
 data class ReviewSessionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val startedAt: Long,
@@ -70,7 +133,8 @@ data class ReviewSessionEntity(
     val choiceMistakes: Int = 0,
     val spellingRounds: Int = 0,
     val spellingMistakes: Int = 0,
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    @ColumnInfo(defaultValue = "1") val libraryId: Long = 1L
 )
 
 @Entity(

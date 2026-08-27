@@ -1,0 +1,7 @@
+<!-- Android 13+ uses the matching v33 resource with a monochrome layer. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="MonochromeLauncherIcon">
+    <background android:drawable="@color/ic_launcher_surface" />
+    <foreground android:drawable="@drawable/ic_launcher_artwork" />
+</adaptive-icon>

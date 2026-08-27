@@ -6,18 +6,19 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 
 - 客户端：原生 Android 应用。
 - 语言和界面：Kotlin + Jetpack Compose + Material 3。
-- 数据存储：Room / SQLite，本地保存单词、导入记录、复习记录、未完成复习进度和记忆状态。
+- 数据存储：Room / SQLite，本地保存多个独立词库、导入记录、复习记录、未完成复习进度和共享记忆状态。
 - 复习逻辑：识别题和拼写题分开记录记忆状态，按到期、遗忘次数、连续正确次数选择本次复习单词。
-- CSV 解析：内置解析器，支持 UTF-8、逗号分隔、带引号字段、空行跳过。
-- 发音：调用 Android 系统 TextToSpeech，不内置在线语音服务。
+- CSV 解析：支持 UTF-8/BOM、UTF-16、GB18030、标准引号字段、空行和常见中英文表头。
+- 发音：优先兼容手机当前的 Android 系统 TextToSpeech 默认英文语音；在可用时再选择高质量离线 voice，并显示引擎、voice、离线/网络类型和具体播放错误。
 - 网络权限：当前应用不声明 `INTERNET` 权限，核心功能离线可用。
+- 备份策略：应用显式禁用 Android 云备份，并排除数据库、配置和文件的系统备份/设备迁移。
 - 构建方式：Gradle Wrapper，当前验证基线为 Android Gradle Plugin 8.7.3 + Gradle 8.9。
 
 ## 软件使用指南
 
 ### 1. 先准备单词 CSV
 
-本软件按“谷歌翻译收藏导出 CSV”的格式设计。CSV 必须是 UTF-8 文本、无表头、每行 4 列：
+本软件按“谷歌翻译收藏导出 CSV”的格式设计。CSV 每行使用 4 列；支持 UTF-8、带 BOM 的 UTF-8/UTF-16 和 GB18030，也可以包含可识别的中英文表头：
 
 ```csv
 英语,中文（简体）,auction,拍卖
@@ -34,10 +35,10 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 | 第 3 列 | 英文单词或短语 | auction |
 | 第 4 列 | 中文释义 | 拍卖 |
 
-使用前请确认：
+使用前建议：
 
-- 文件编码是 UTF-8。
-- 文件没有标题行。
+- 优先使用 UTF-8；软件也支持带 BOM 的 UTF-8/UTF-16 和 GB18030。
+- 可以不带表头；如保留表头，请使用常见的中英文列名。
 - 每一行至少有 4 列。
 - 第 3 列英文不能为空。
 - 第 4 列中文释义不能为空。
@@ -61,7 +62,7 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 2. 找到最新版本，例如 `Personal Word Review v1.0.0`。
 3. 在该版本下面找到 `Assets` 区域。
 4. 点击 `app-release.apk` 下载安卓安装包。
-5. 如果只是想直接下载当前版本，可以点这个链接：[app-release.apk](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/download/v1.0.0/app-release.apk)。
+5. 如果只是想直接下载当前已发布的 v1.0.0，可以点这个链接：[app-release.apk](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/download/v1.0.0/app-release.apk)。
 
 手机上下载时的提示：
 
@@ -83,11 +84,11 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 
 ### 4. 配置英文发音
 
-软件使用手机系统自带的 TextToSpeech 发音能力。打开首页后，可以看到“配置语音模型”和语音状态提示。
+软件使用手机系统自带的 TextToSpeech 发音能力。打开首页后，可以进入“语音设置”查看状态。
 
 建议第一次使用时这样做：
 
-1. 点击首页的“配置语音模型”。
+1. 点击首页的“语音设置”。
 2. 进入手机系统的文字转语音设置。
 3. 选择一个可用的英文 TTS 引擎。
 4. 如果系统提示缺少语音数据，安装英文语音包。
@@ -102,8 +103,8 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 
 ### 5. 导入单词
 
-1. 打开软件首页。
-2. 点击“导入 CSV”。
+1. 打开软件首页，点击“管理单词库 / 导入”。
+2. 新建词库，或在已有词库上点击“导入/更新”。
 3. 点击“选择文件”。
 4. 在系统文件选择器里找到你的 CSV 文件。
 5. 选中文件后，软件会自动开始导入。
@@ -117,14 +118,16 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 - 更新释义：已有单词里新增了释义的数量。
 - 失败行数：格式不合格、空单词或空释义的行数。
 
-如果失败行数很多，优先检查 CSV 是否有表头、是否为 UTF-8、是否每行都有 4 列。
+如果失败行数很多，优先检查表头列名是否可识别、文件编码是否受支持、是否每行都有 4 列。
 
 ### 6. 查看和管理单词库
 
-1. 回到首页。
-2. 点击“单词库”。
-3. 在顶部搜索框输入英文或中文释义。
+1. 回到首页，点击“管理单词库 / 导入”。
+2. 可以新建、重命名或删除词库，也可以单独更新任意词库。
+3. 点击词库的“查看”，在顶部搜索框输入英文或中文释义。
 4. 点击任意单词进入详情页。
+
+同一个英文词可以同时属于多个词库，各词库的显示形式和释义互不影响；复习间隔、遗忘次数、连续正确次数和“不再拼写”设置在所有词库间共享。
 
 在单词详情页可以做这些事：
 
@@ -144,8 +147,9 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 
 1. 回到首页。
 2. 点击“开始复习”。
-3. 在“本次复习数量”里输入想复习的单词数。
-4. 点击“开始复习”。
+3. 选择这次要学习的一个词库。
+4. 在“本次复习数量”里输入想复习的单词数。
+5. 点击“开始复习”。
 
 软件会从词库中挑选本次要复习的单词。挑选时会优先考虑：
 
@@ -183,16 +187,17 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 
 1. 看中文释义。
 2. 需要听发音时，点击“发音”。
-3. 在输入框里输入英文拼写。
-4. 点击“提交”。
+3. 使用页面下方的软件内置键盘输入英文拼写；拼写阶段不会调用系统输入法。
+4. 点击键盘下方的“提交”。
 5. 查看对错和正确答案。
-6. 点击“下一个”继续。
+6. 点击“下一题”继续。
 
 拼写判断规则：
 
 - 会忽略首尾空格。
 - 会统一转成小写。
 - 会把连续多个空格合并成一个空格。
+- 内置键盘采用简洁的 QWERTY 字母布局，支持空格、连字符、撇号、句点、退格和清空。
 - 其他内容必须和标准英文完全一致。
 
 例如，单词标准形式是 `take off`：
@@ -237,7 +242,17 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 - 想这批词重做，选“重新开始”。
 - 想放弃这次，选“跳过”。
 
-### 12. 日常推荐使用流程
+### 12. 重置复习记忆
+
+如果希望所有单词重新按首次学习处理，可以在首页点击“重置我的复习记忆”。确认后会清除：
+
+- 复习间隔和下次到期时间。
+- 遗忘次数和连续正确次数。
+- 未完成的复习进度。
+
+词库、单词、释义、导入记录以及“不再拼写”设置不会被删除。此操作无法撤销。
+
+### 13. 日常推荐使用流程
 
 第一次使用：
 
@@ -245,7 +260,7 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 2. 从 GitHub Release 下载 APK。
 3. 安装 APK。
 4. 打开软件。
-5. 配置语音模型。
+5. 检查语音设置。
 6. 导入 CSV。
 7. 进入单词库，抽查几个单词和释义。
 8. 回首页开始复习。
@@ -276,11 +291,11 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 
 常见原因：
 
-- CSV 有标题行。
+- CSV 表头使用了无法识别的列名。
 - 某一行少于 4 列。
 - 英文单词为空。
 - 中文释义为空。
-- 文件不是 UTF-8 编码。
+- 文件编码不是 UTF-8、UTF-16 或 GB18030。
 - CSV 引号或逗号格式不规范。
 
 ### 为什么选择题提示题目生成失败？
@@ -295,7 +310,7 @@ Personal Word Review 是一个安卓本地生词复习软件，主要面向从�
 - 是否安装了英文语音数据。
 - 系统音量是否打开。
 - 首页语音状态是否正常。
-- 点击“配置语音模型”后重新选择英文语音。
+- 点击“语音设置”后重新选择英文语音。
 
 ### 软件会上传我的单词吗？
 
@@ -317,7 +332,7 @@ $env:PATH="$env:JAVA_HOME\bin;$env:PATH"
 .\gradlew.bat :app:assembleDebug
 ```
 
-构建 release unsigned APK：
+构建 Release APK（存在本地签名配置时自动生成正式签名包）：
 
 ```powershell
 $env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
@@ -328,14 +343,32 @@ $env:PATH="$env:JAVA_HOME\bin;$env:PATH"
 生成文件位置：
 
 ```text
-app/build/outputs/apk/release/app-release-unsigned.apk
+app/build/outputs/apk/release/app-release.apk
 ```
 
-正式分发前需要配置 release signing config 或手动签名。不要把 keystore、签名密码、`local.properties`、`keystore.properties` 提交到仓库。
+没有 `keystore.properties` 时只会生成 `app-release-unsigned.apk`，不能直接作为正式安装包分发。不要把 keystore、签名密码、`local.properties`、`keystore.properties` 提交到仓库。
+
+正式打包前建议先执行完整门禁：
+
+```powershell
+.\gradlew.bat testDebugUnitTest lintDebug assembleDebug assembleAndroidTest assembleRelease
+```
+
+如需由 Gradle 直接生成已签名 APK，请将 `keystore.properties.example` 复制为 `keystore.properties`，填写真实签名文件和密码后再执行 `assembleRelease`。签名配置存在时输出为 `app-release.apk`；未配置时只会生成 `app-release-unsigned.apk`。签名文件和密码配置都已被 `.gitignore` 排除，不要提交到 Git。
+
+当前正式签名身份（2026-08-27 新建）：
+
+- 密钥别名：`wordreview-release`
+- 证书主体：`CN=QIU, OU=CQU, O=CQU, L=CHONGQING, ST=CHONGQING, C=CN`
+- 证书 SHA-256：`569c226d9a270d169c7ded6bbb9a08e7f1639a5ae14299aa012effbaaf9b05bd`
+- 本地密钥：`release-key.jks`
+- 本地密码配置：`keystore.properties`
+
+必须将 `release-key.jks` 与 `keystore.properties` 一起备份到至少两个加密且相互独立的位置。二者均不可重新生成、不可提交到 Git；后续版本必须持续使用同一密钥，否则无法覆盖安装当前版本。`scripts/create_release_keystore.ps1` 只用于首次创建，并会拒绝覆盖已有密钥。
 
 ## 版本信息
 
-- versionCode: 1
-- versionName: 1.0.0
+- versionCode: 4
+- versionName: 1.1.2
 - 当前定位：本地离线生词复习工具
 - APK 体积目标：小于 30MB

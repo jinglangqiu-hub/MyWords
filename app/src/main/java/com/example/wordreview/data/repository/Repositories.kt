@@ -6,6 +6,8 @@ import android.provider.OpenableColumns
 import androidx.room.withTransaction
 import com.example.wordreview.data.local.AppDatabase
 import com.example.wordreview.data.local.entity.ImportBatchEntity
+import com.example.wordreview.data.local.entity.LibraryWordEntity
+import com.example.wordreview.data.local.entity.LibraryWordEntry
 import com.example.wordreview.data.local.entity.MemoryStateEntity
 import com.example.wordreview.data.local.entity.ReviewMemorySnapshotEntity
 import com.example.wordreview.data.local.entity.ReviewProgressEntity
@@ -13,6 +15,8 @@ import com.example.wordreview.data.local.entity.ReviewResultEntity
 import com.example.wordreview.data.local.entity.ReviewSessionEntity
 import com.example.wordreview.data.local.entity.ReviewSessionWordEntity
 import com.example.wordreview.data.local.entity.WordEntity
+import com.example.wordreview.data.local.entity.WordLibraryEntity
+import com.example.wordreview.data.local.entity.WordLibrarySummary
 import com.example.wordreview.domain.CsvParser
 import com.example.wordreview.domain.ImportResult
 import com.example.wordreview.domain.MEMORY_RECOGNITION
@@ -26,25 +30,62 @@ import com.example.wordreview.domain.STAGE_SPELLING
 import com.example.wordreview.domain.WordNormalizer
 import com.example.wordreview.domain.toReviewWord
 import kotlinx.coroutines.flow.Flow
-import java.nio.charset.Charset
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.util.Locale
 
 class WordRepository(private val db: AppDatabase) {
-    fun observeAllWords(): Flow<List<WordEntity>> = db.wordDao().observeAllWords()
-    fun searchWords(query: String): Flow<List<WordEntity>> = db.wordDao().searchWords(query)
-    suspend fun countWords(): Int = db.wordDao().countWords()
-    suspend fun getWord(id: Long): WordEntity? = db.wordDao().getById(id)
-    suspend fun allWords(): List<WordEntity> = db.wordDao().getAllWords()
-    suspend fun latestImport(): ImportBatchEntity? = db.importBatchDao().getLatestImport()
+    fun observeLibraries(): Flow<List<WordLibrarySummary>> = db.wordLibraryDao().observeSummaries()
+    fun observeWords(libraryId: Long): Flow<List<LibraryWordEntry>> = db.wordLibraryDao().observeWords(libraryId)
+    fun searchWords(libraryId: Long, query: String): Flow<List<LibraryWordEntry>> =
+        db.wordLibraryDao().searchWords(libraryId, query)
 
-    suspend fun updateMeaning(wordId: Long, meaning: String) {
-        val word = db.wordDao().getById(wordId) ?: return
-        db.wordDao().update(word.copy(meaningText = meaning.trim(), updatedAt = System.currentTimeMillis()))
+    suspend fun libraries(): List<WordLibraryEntity> = db.wordLibraryDao().getAll()
+    suspend fun getLibrary(libraryId: Long): WordLibraryEntity? = db.wordLibraryDao().getById(libraryId)
+    suspend fun countWords(libraryId: Long): Int = db.wordLibraryDao().countWords(libraryId)
+    suspend fun getWord(libraryId: Long, wordId: Long): LibraryWordEntry? = db.wordLibraryDao().getWord(libraryId, wordId)
+    suspend fun allWords(libraryId: Long): List<LibraryWordEntry> = db.wordLibraryDao().getWords(libraryId)
+    suspend fun latestImport(): ImportBatchEntity? = db.importBatchDao().getLatestImport()
+    suspend fun latestImport(libraryId: Long): ImportBatchEntity? = db.importBatchDao().getLatestImport(libraryId)
+
+    suspend fun createLibrary(name: String): Long {
+        val clean = validateLibraryName(name)
+        val normalized = normalizeLibraryName(clean)
+        require(db.wordLibraryDao().getByNormalizedName(normalized) == null) { "词库名称已存在。" }
+        val now = System.currentTimeMillis()
+        return db.wordLibraryDao().insert(
+            WordLibraryEntity(name = clean, normalizedName = normalized, createdAt = now, updatedAt = now)
+        )
     }
 
-    suspend fun appendMeaning(wordId: Long, meaning: String) {
-        val word = db.wordDao().getById(wordId) ?: return
-        val (merged, changed) = WordNormalizer.mergeMeaning(word.meaningText, meaning)
-        if (changed) db.wordDao().update(word.copy(meaningText = merged, updatedAt = System.currentTimeMillis()))
+    suspend fun renameLibrary(libraryId: Long, name: String) {
+        val library = db.wordLibraryDao().getById(libraryId) ?: error("词库不存在。")
+        val clean = validateLibraryName(name)
+        val normalized = normalizeLibraryName(clean)
+        val duplicate = db.wordLibraryDao().getByNormalizedName(normalized)
+        require(duplicate == null || duplicate.id == libraryId) { "词库名称已存在。" }
+        db.wordLibraryDao().update(library.copy(name = clean, normalizedName = normalized, updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun deleteLibrary(libraryId: Long) {
+        db.withTransaction {
+            require(db.wordLibraryDao().countLibraries() > 1) { "至少需要保留一个词库。" }
+            require(db.reviewSessionDao().getActiveSession(libraryId) == null) { "该词库有未完成的复习，请先继续或跳过。" }
+            require(db.wordLibraryDao().getById(libraryId) != null) { "词库不存在。" }
+            db.reviewSessionDao().deleteByLibrary(libraryId)
+            db.importBatchDao().deleteByLibrary(libraryId)
+            db.wordLibraryDao().delete(libraryId)
+            db.wordDao().deleteOrphanWords()
+        }
+    }
+
+    suspend fun updateMeaning(libraryId: Long, wordId: Long, meaning: String) {
+        val membership = db.wordLibraryDao().getMembership(libraryId, wordId) ?: return
+        val now = System.currentTimeMillis()
+        db.withTransaction {
+            db.wordLibraryDao().updateMembership(membership.copy(meaningText = meaning.trim(), updatedAt = now))
+            db.wordLibraryDao().touch(libraryId, now)
+        }
     }
 
     suspend fun setSpellingDisabled(wordId: Long, disabled: Boolean) {
@@ -55,41 +96,63 @@ class WordRepository(private val db: AppDatabase) {
     suspend fun memoryStates(wordId: Long): Pair<MemoryStateEntity?, MemoryStateEntity?> =
         db.memoryStateDao().getState(wordId, MEMORY_RECOGNITION) to
             db.memoryStateDao().getState(wordId, MEMORY_SPELLING)
+
+    private fun validateLibraryName(name: String): String =
+        name.trim().also { require(it.isNotBlank()) { "词库名称不能为空。" } }
+
+    private fun normalizeLibraryName(name: String): String = name.trim().lowercase(Locale.ROOT)
 }
 
 class ImportRepository(private val db: AppDatabase, private val contentResolver: ContentResolver) {
-    suspend fun importGoogleTranslateCsv(uri: Uri): ImportResult {
-        val text = contentResolver.openInputStream(uri)?.use { input ->
-            input.readBytes().toString(Charset.forName("UTF-8"))
-        } ?: error("Cannot open selected file")
-
-        val rows = CsvParser.parse(text)
-        var totalRows = 0
+    suspend fun importCsv(libraryId: Long, uri: Uri): ImportResult = withContext(Dispatchers.IO) {
+        require(db.wordLibraryDao().getById(libraryId) != null) { "词库不存在。" }
+        val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: error("无法打开所选文件。")
+        val decoded = CsvParser.decode(bytes)
+        val parsed = CsvParser.parse(decoded.text)
+        var totalRows = parsed.issues.size
         var newCount = 0
         var existingCount = 0
         var updatedMeaningCount = 0
-        var failedRowCount = 0
+        var skippedHeaderCount = 0
+        val failureReasons = linkedMapOf<String, Int>()
+        val failureLines = mutableListOf<Int>()
         val now = System.currentTimeMillis()
 
+        parsed.issues.forEach { issue ->
+            failureReasons[issue.reason] = (failureReasons[issue.reason] ?: 0) + 1
+            if (failureLines.size < 10) failureLines += issue.lineNumber
+        }
+
+        fun fail(line: Int, reason: String) {
+            failureReasons[reason] = (failureReasons[reason] ?: 0) + 1
+            if (failureLines.size < 10) failureLines += line
+        }
+
         db.withTransaction {
-            rows.forEach { row ->
+            parsed.rows.forEachIndexed { index, csvRow ->
+                val row = csvRow.fields
+                if (index == 0 && CsvParser.isRecognizedHeader(row)) {
+                    skippedHeaderCount++
+                    return@forEachIndexed
+                }
                 totalRows++
                 if (row.size < 4) {
-                    failedRowCount++
-                    return@forEach
+                    fail(csvRow.lineNumber, "列数不足")
+                    return@forEachIndexed
                 }
                 val sourceLang = row[0].trim()
                 val targetLang = row[1].trim()
                 val displayTerm = row[2].trim()
                 val translation = row[3].trim()
                 if (displayTerm.isBlank() || translation.isBlank()) {
-                    failedRowCount++
-                    return@forEach
+                    fail(csvRow.lineNumber, if (displayTerm.isBlank()) "英文为空" else "释义为空")
+                    return@forEachIndexed
                 }
                 val normalizedTerm = WordNormalizer.normalizeTerm(displayTerm)
                 val existing = db.wordDao().getByNormalizedTerm(normalizedTerm)
-                if (existing == null) {
-                    val wordId = db.wordDao().insert(
+                val wordId = if (existing == null) {
+                    val createdId = db.wordDao().insert(
                         WordEntity(
                             normalizedTerm = normalizedTerm,
                             displayTerm = displayTerm,
@@ -100,18 +163,29 @@ class ImportRepository(private val db: AppDatabase, private val contentResolver:
                             updatedAt = now
                         )
                     )
-                    db.memoryStateDao().insert(MemoryStateEntity(wordId = wordId, type = MEMORY_RECOGNITION, dueAt = 0L))
-                    db.memoryStateDao().insert(MemoryStateEntity(wordId = wordId, type = MEMORY_SPELLING, dueAt = 0L))
+                    db.memoryStateDao().insert(MemoryStateEntity(wordId = createdId, type = MEMORY_RECOGNITION, dueAt = 0L))
+                    db.memoryStateDao().insert(MemoryStateEntity(wordId = createdId, type = MEMORY_SPELLING, dueAt = 0L))
+                    createdId
+                } else {
+                    existing.id
+                }
+                val membership = db.wordLibraryDao().getMembership(libraryId, wordId)
+                if (membership == null) {
+                    db.wordLibraryDao().insertMembership(
+                        LibraryWordEntity(libraryId, wordId, displayTerm, sourceLang, targetLang, translation, now, now)
+                    )
                     newCount++
                 } else {
                     existingCount++
-                    val (merged, changed) = WordNormalizer.mergeMeaning(existing.meaningText, translation)
+                    val (merged, changed) = WordNormalizer.mergeMeaning(membership.meaningText, translation)
                     if (changed) {
-                        db.wordDao().update(existing.copy(meaningText = merged, updatedAt = now))
+                        db.wordLibraryDao().updateMembership(membership.copy(meaningText = merged, updatedAt = now))
                         updatedMeaningCount++
                     }
                 }
             }
+            db.wordLibraryDao().touch(libraryId, now)
+            val failedRowCount = failureReasons.values.sum()
             db.importBatchDao().insert(
                 ImportBatchEntity(
                     fileName = displayName(uri),
@@ -120,11 +194,15 @@ class ImportRepository(private val db: AppDatabase, private val contentResolver:
                     newCount = newCount,
                     existingCount = existingCount,
                     updatedMeaningCount = updatedMeaningCount,
-                    failedRowCount = failedRowCount
+                    failedRowCount = failedRowCount,
+                    libraryId = libraryId
                 )
             )
         }
-        return ImportResult(totalRows, newCount, existingCount, updatedMeaningCount, failedRowCount)
+        ImportResult(
+            totalRows, newCount, existingCount, updatedMeaningCount, failureReasons.values.sum(),
+            skippedHeaderCount, failureReasons, failureLines.distinct(), decoded.encodingName
+        )
     }
 
     private fun displayName(uri: Uri): String {
@@ -138,6 +216,11 @@ class ImportRepository(private val db: AppDatabase, private val contentResolver:
 }
 
 class ReviewRepository(private val db: AppDatabase) {
+    data class MemoryResetResult(
+        val clearedMemoryStateCount: Int,
+        val abandonedSessionCount: Int
+    )
+
     data class SavedProgress(
         val roundIndex: Int,
         val currentIndex: Int,
@@ -147,6 +230,7 @@ class ReviewRepository(private val db: AppDatabase) {
 
     data class ActiveSession(
         val sessionId: Long,
+        val libraryId: Long,
         val currentStage: String,
         val words: List<ReviewWord>,
         val choiceProgress: SavedProgress?,
@@ -157,13 +241,15 @@ class ReviewRepository(private val db: AppDatabase) {
     suspend fun activeSession(): ActiveSession? =
         db.reviewSessionDao().getActiveSession()?.let { loadActiveSession(it) }
 
-    suspend fun startSession(plannedCount: Int): ActiveSession {
-        val words = db.wordDao().getAllWords().filter { it.meaningText.trim().isNotBlank() }
+    suspend fun startSession(libraryId: Long, plannedCount: Int): ActiveSession {
+        require(db.wordLibraryDao().getById(libraryId) != null) { "词库不存在。" }
+        val words = db.wordLibraryDao().getWords(libraryId).filter { it.meaningText.trim().isNotBlank() }
         val states = db.memoryStateDao().getStatesByType(MEMORY_RECOGNITION)
         val picked = ReviewScheduler.pick(words, states, plannedCount, System.currentTimeMillis())
         val now = System.currentTimeMillis()
         var sessionId = 0L
         db.withTransaction {
+            require(db.reviewSessionDao().getActiveSession() == null) { "已有未完成的复习。" }
             sessionId = db.reviewSessionDao().insert(
                 ReviewSessionEntity(
                     startedAt = now,
@@ -171,7 +257,8 @@ class ReviewRepository(private val db: AppDatabase) {
                     actualCount = picked.size,
                     status = "active",
                     currentStage = STAGE_CHOICE,
-                    updatedAt = now
+                    updatedAt = now,
+                    libraryId = libraryId
                 )
             )
             db.reviewSessionWordDao().insertAll(
@@ -222,6 +309,11 @@ class ReviewRepository(private val db: AppDatabase) {
     ) {
         val now = System.currentTimeMillis()
         db.withTransaction {
+            val session = db.reviewSessionDao().getById(sessionId)
+            if (session?.status != "active") return@withTransaction
+            if (db.reviewResultDao().getAnswer(sessionId, stage, roundIndex, wordId) != null) {
+                return@withTransaction
+            }
             db.reviewResultDao().insert(
                 ReviewResultEntity(
                     sessionId = sessionId,
@@ -239,6 +331,19 @@ class ReviewRepository(private val db: AppDatabase) {
             val next = MemoryUpdater.next(current, wordId, type, isCorrect, now)
             if (current == null) db.memoryStateDao().insert(next) else db.memoryStateDao().update(next)
         }
+    }
+
+    suspend fun resetMemory(): MemoryResetResult {
+        val now = System.currentTimeMillis()
+        var clearedMemoryStateCount = 0
+        var abandonedSessionCount = 0
+        db.withTransaction {
+            abandonedSessionCount = db.reviewSessionDao().abandonAllActive(now)
+            db.reviewProgressDao().deleteAll()
+            db.reviewMemorySnapshotDao().deleteAll()
+            clearedMemoryStateCount = db.memoryStateDao().deleteAll()
+        }
+        return MemoryResetResult(clearedMemoryStateCount, abandonedSessionCount)
     }
 
     suspend fun restartActiveSession(): ActiveSession? {
@@ -271,6 +376,7 @@ class ReviewRepository(private val db: AppDatabase) {
             rollbackMemory(session.id)
             db.reviewResultDao().deleteBySession(session.id)
             db.reviewProgressDao().deleteBySession(session.id)
+            db.reviewMemorySnapshotDao().deleteBySession(session.id)
             db.reviewSessionDao().update(
                 session.copy(status = "abandoned", endedAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis())
             )
@@ -278,18 +384,23 @@ class ReviewRepository(private val db: AppDatabase) {
     }
 
     suspend fun finishSession(sessionId: Long, summary: ReviewSummary) {
-        val session = db.reviewSessionDao().getById(sessionId) ?: return
-        db.reviewSessionDao().update(
-            session.copy(
-                status = "completed",
-                endedAt = System.currentTimeMillis(),
-                choiceRounds = summary.choiceRounds,
-                choiceMistakes = summary.choiceMistakes,
-                spellingRounds = summary.spellingRounds,
-                spellingMistakes = summary.spellingMistakes,
-                updatedAt = System.currentTimeMillis()
+        db.withTransaction {
+            val session = db.reviewSessionDao().getById(sessionId) ?: return@withTransaction
+            val now = System.currentTimeMillis()
+            db.reviewSessionDao().update(
+                session.copy(
+                    status = "completed",
+                    endedAt = now,
+                    choiceRounds = summary.choiceRounds,
+                    choiceMistakes = summary.choiceMistakes,
+                    spellingRounds = summary.spellingRounds,
+                    spellingMistakes = summary.spellingMistakes,
+                    updatedAt = now
+                )
             )
-        )
+            db.reviewProgressDao().deleteBySession(sessionId)
+            db.reviewMemorySnapshotDao().deleteBySession(sessionId)
+        }
     }
 
     suspend fun hasAnswer(sessionId: Long, stage: String, roundIndex: Int, wordId: Long): Boolean =
@@ -297,10 +408,11 @@ class ReviewRepository(private val db: AppDatabase) {
 
     private suspend fun loadActiveSession(session: ReviewSessionEntity): ActiveSession {
         val wordIds = db.reviewSessionWordDao().getBySession(session.id).map { it.wordId }
-        val wordsById = db.wordDao().getAllWords().associateBy { it.id }
+        val wordsById = db.wordLibraryDao().getWords(session.libraryId).associateBy { it.wordId }
         val reviewWords = wordIds.mapNotNull { wordsById[it]?.toReviewWord() }
         return ActiveSession(
             sessionId = session.id,
+            libraryId = session.libraryId,
             currentStage = session.currentStage,
             words = reviewWords,
             choiceProgress = db.reviewProgressDao().get(session.id, STAGE_CHOICE)?.toSavedProgress(),
