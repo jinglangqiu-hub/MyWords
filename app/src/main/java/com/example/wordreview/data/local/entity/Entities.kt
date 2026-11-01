@@ -68,7 +68,10 @@ data class WordLibrarySummary(
     val id: Long,
     val name: String,
     val wordCount: Int,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val reviewableCount: Int = 0,
+    val startedCount: Int = 0,
+    val learnedCount: Int = 0
 )
 
 data class LibraryWordEntry(

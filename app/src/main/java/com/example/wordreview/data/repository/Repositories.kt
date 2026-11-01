@@ -18,6 +18,8 @@ import com.example.wordreview.data.local.entity.WordEntity
 import com.example.wordreview.data.local.entity.WordLibraryEntity
 import com.example.wordreview.data.local.entity.WordLibrarySummary
 import com.example.wordreview.domain.CsvParser
+import com.example.wordreview.domain.ChoiceOptionGenerator
+import com.example.wordreview.domain.ChoiceOption
 import com.example.wordreview.domain.ImportResult
 import com.example.wordreview.domain.MEMORY_RECOGNITION
 import com.example.wordreview.domain.MEMORY_SPELLING
@@ -235,7 +237,8 @@ class ReviewRepository(private val db: AppDatabase) {
         val words: List<ReviewWord>,
         val choiceProgress: SavedProgress?,
         val spellingProgress: SavedProgress?,
-        val summary: ReviewSummary
+        val summary: ReviewSummary,
+        val choiceDistractors: Map<Long, List<ChoiceOption>> = emptyMap()
     )
 
     suspend fun activeSession(): ActiveSession? =
@@ -244,8 +247,16 @@ class ReviewRepository(private val db: AppDatabase) {
     suspend fun startSession(libraryId: Long, plannedCount: Int): ActiveSession {
         require(db.wordLibraryDao().getById(libraryId) != null) { "词库不存在。" }
         val words = db.wordLibraryDao().getWords(libraryId).filter { it.meaningText.trim().isNotBlank() }
-        val states = db.memoryStateDao().getStatesByType(MEMORY_RECOGNITION)
+        val states = db.memoryStateDao().getStatesByType(MEMORY_RECOGNITION) +
+            db.memoryStateDao().getStatesByType(MEMORY_SPELLING)
         val picked = ReviewScheduler.pick(words, states, plannedCount, System.currentTimeMillis())
+        require(picked.isNotEmpty()) { "当前词库没有新词或到期单词，请到期后再来复习。" }
+        val distractors = withContext(Dispatchers.Default) {
+            ChoiceOptionGenerator.prepareDistractors(picked, words)
+        }
+        require(picked.all { distractors[it.id].orEmpty().isNotEmpty() }) {
+            "部分单词找不到无歧义的干扰项，请补充释义差异较大的单词后再复习。"
+        }
         val now = System.currentTimeMillis()
         var sessionId = 0L
         db.withTransaction {
@@ -274,6 +285,7 @@ class ReviewRepository(private val db: AppDatabase) {
             )
         }
         return loadActiveSession(db.reviewSessionDao().getById(sessionId) ?: error("Session was not created"))
+            .copy(choiceDistractors = distractors)
     }
 
     suspend fun saveProgress(sessionId: Long, stage: String, progress: SavedProgress) {
@@ -328,7 +340,11 @@ class ReviewRepository(private val db: AppDatabase) {
             )
             val type = if (stage == "choice") MEMORY_RECOGNITION else MEMORY_SPELLING
             val current = db.memoryStateDao().getState(wordId, type)
-            val next = MemoryUpdater.next(current, wordId, type, isCorrect, now)
+            val alreadyReviewed = db.reviewResultDao().hasOtherRoundAnswer(sessionId, stage, roundIndex, wordId)
+            // Immediate correction is practice, not another day of retention.
+            // Count a lapse once per session and keep its short review interval.
+            val next = if (alreadyReviewed && current != null) current.copy(lastReviewedAt = now)
+                else MemoryUpdater.next(current, wordId, type, isCorrect, now)
             if (current == null) db.memoryStateDao().insert(next) else db.memoryStateDao().update(next)
         }
     }
@@ -410,6 +426,7 @@ class ReviewRepository(private val db: AppDatabase) {
         val wordIds = db.reviewSessionWordDao().getBySession(session.id).map { it.wordId }
         val wordsById = db.wordLibraryDao().getWords(session.libraryId).associateBy { it.wordId }
         val reviewWords = wordIds.mapNotNull { wordsById[it]?.toReviewWord() }
+        val results = db.reviewResultDao().getResultsBySession(session.id)
         return ActiveSession(
             sessionId = session.id,
             libraryId = session.libraryId,
@@ -420,9 +437,9 @@ class ReviewRepository(private val db: AppDatabase) {
             summary = ReviewSummary(
                 actualCount = session.actualCount,
                 choiceRounds = session.choiceRounds,
-                choiceMistakes = session.choiceMistakes,
+                choiceMistakes = results.count { it.stage == STAGE_CHOICE && !it.isCorrect },
                 spellingRounds = session.spellingRounds,
-                spellingMistakes = session.spellingMistakes
+                spellingMistakes = results.count { it.stage == STAGE_SPELLING && !it.isCorrect }
             )
         )
     }

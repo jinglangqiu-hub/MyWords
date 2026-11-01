@@ -14,12 +14,14 @@ import com.example.wordreview.data.repository.ReviewRepository
 import com.example.wordreview.data.repository.WordRepository
 import com.example.wordreview.domain.ChoiceOptionGenerator
 import com.example.wordreview.domain.ChoiceQuestion
+import com.example.wordreview.domain.ChoiceOption
 import com.example.wordreview.domain.ImportResult
 import com.example.wordreview.domain.ReviewSummary
 import com.example.wordreview.domain.ReviewWord
 import com.example.wordreview.domain.STAGE_CHOICE
 import com.example.wordreview.domain.STAGE_SPELLING
 import com.example.wordreview.domain.SpellingQuestion
+import com.example.wordreview.domain.SpellingRetryPolicy
 import com.example.wordreview.domain.WordNormalizer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -144,7 +146,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var sessionId: Long = 0L
     private var reviewWords: List<ReviewWord> = emptyList()
     private var allWordsCache: List<LibraryWordEntry> = emptyList()
-    private var choiceDistractorCache: Map<Long, List<String>> = emptyMap()
+    private var choiceDistractorCache: Map<Long, List<ChoiceOption>> = emptyMap()
     private var libraryWordsJob: Job? = null
     private val preferences = application.getSharedPreferences("word_review_preferences", 0)
     private var choiceRoundWords: List<ReviewWord> = emptyList()
@@ -422,9 +424,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 sessionId = active.sessionId
                 reviewWords = active.words
                 allWordsCache = allWords
-                choiceDistractorCache = withContext(Dispatchers.Default) {
-                    ChoiceOptionGenerator.prepareDistractors(active.words, allWords)
-                }
+                choiceDistractorCache = active.choiceDistractors
                 _summary.value = active.summary
                 choiceRoundWords = active.words
                 choiceWrongWords = mutableListOf()
@@ -443,6 +443,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val state = _choice.value
         val question = state.currentQuestion ?: return
         if (state.isAnswered) return
+        if (question.options.none { it.meaning == option }) return
         val correctAnswer = question.word.meaningText.trim()
         val correct = option == correctAnswer
         _choice.update {
@@ -455,6 +456,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 persistenceError = null
             )
         }
+        choiceWrongWords.removeAll { it.id == question.word.id }
         if (!correct) {
             choiceWrongWords += question.word
             _summary.update { it.copy(choiceMistakes = it.choiceMistakes + 1) }
@@ -567,6 +569,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 statusMessage = null
             )
         }
+        spellingWrongWords.removeAll { it.id == question.word.id }
         if (!correct) {
             spellingWrongWords += question.word
             _summary.update { it.copy(spellingMistakes = it.spellingMistakes + 1) }
@@ -624,8 +627,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             loadSpellingQuestion()
             return
         }
-        if (spellingWrongWords.isNotEmpty()) {
-            spellingRoundWords = spellingWrongWords.toList()
+        val retryIds = SpellingRetryPolicy.nextRound(spellingWrongWords.map { it.id }, state.roundIndex)
+        if (retryIds.isNotEmpty()) {
+            spellingRoundWords = retryIds.toReviewWords(reviewWords)
             spellingWrongWords = mutableListOf()
             _spelling.value = SpellingState(
                 roundIndex = state.roundIndex + 1,
@@ -635,7 +639,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             loadSpellingQuestion()
             return
         }
-        _summary.update { it.copy(spellingRounds = state.roundIndex) }
+        _summary.update { it.copy(spellingRounds = state.roundIndex, deferredSpellingCount = spellingWrongWords.distinctBy { word -> word.id }.size) }
         onDone()
     }
 
@@ -675,11 +679,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         )
         val hasChoiceQuestion = loadChoiceQuestion()
         if (active.currentStage == STAGE_CHOICE && !hasChoiceQuestion) return false
+        if (active.currentStage == STAGE_CHOICE &&
+            (choiceRoundWords.drop(_choice.value.currentIndex) + choiceWrongWords).any { choiceDistractorCache[it.id].isNullOrEmpty() }
+        ) return false
 
         val spellingProgress = active.spellingProgress
         if (spellingProgress != null) {
             spellingRoundWords = spellingProgress.roundWordIds.toReviewWords(active.words)
-            spellingWrongWords = spellingProgress.wrongWordIds.toReviewWords(active.words).toMutableList()
+            spellingWrongWords = spellingProgress.wrongWordIds.distinct().toReviewWords(active.words).filterNot { it.spellingDisabled }.toMutableList()
             _spelling.value = SpellingState(
                 roundIndex = spellingProgress.roundIndex,
                 currentIndex = spellingProgress.currentIndex.coerceAtMost((spellingRoundWords.size - 1).coerceAtLeast(0)),
@@ -752,15 +759,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 )
             }
-            wrongIdsAfterAnswer.isNotEmpty() -> {
+            SpellingRetryPolicy.nextRound(wrongIdsAfterAnswer, answeredState.roundIndex).isNotEmpty() -> {
                 reviews.saveProgress(
                     sessionId,
                     STAGE_SPELLING,
-                    ReviewRepository.SavedProgress(answeredState.roundIndex + 1, 0, wrongIdsAfterAnswer, emptyList())
+                    ReviewRepository.SavedProgress(answeredState.roundIndex + 1, 0, wrongIdsAfterAnswer.distinct(), emptyList())
                 )
             }
             else -> {
-                val nextSummary = summaryAfterAnswer.copy(spellingRounds = answeredState.roundIndex)
+                val nextSummary = summaryAfterAnswer.copy(spellingRounds = answeredState.roundIndex, deferredSpellingCount = wrongIdsAfterAnswer.distinct().size)
                 _summary.value = nextSummary
                 reviews.finishSession(sessionId, nextSummary)
             }
@@ -814,5 +821,5 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun invalidChoiceSessionMessage(): String =
-        "这次未完成复习无法生成选择题。请先跳过它，确认词库至少有 3 个不同释义后重新开始。"
+        "这次未完成复习找不到足够的无歧义选项。请先跳过它，补充释义差异较大的单词后重新开始。"
 }

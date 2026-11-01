@@ -12,6 +12,8 @@ import com.example.wordreview.data.local.entity.WordEntity
 import com.example.wordreview.domain.MEMORY_RECOGNITION
 import com.example.wordreview.domain.ReviewSummary
 import com.example.wordreview.domain.STAGE_CHOICE
+import com.example.wordreview.domain.STAGE_SPELLING
+import com.example.wordreview.domain.MEMORY_SPELLING
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -130,6 +132,27 @@ class ReviewMemoryResetTest {
 
         assertEquals(1, db.reviewResultDao().getResultsBySession(sessionId).size)
         assertEquals(1, db.memoryStateDao().getState(wordId, MEMORY_RECOGNITION)?.successStreak)
+    }
+
+    @Test
+    fun spellingCorrectionsDoNotInflateIntervalsOrCountTheSameLapseAgain() = runBlocking {
+        val wordId = insertWord()
+        val sessionId = insertSession()
+        val repository = ReviewRepository(db)
+        repository.saveAnswer(sessionId, wordId, STAGE_SPELLING, 1, false, "wrong", "accept")
+        val first = db.memoryStateDao().getState(wordId, MEMORY_SPELLING)!!
+        repository.saveAnswer(sessionId, wordId, STAGE_SPELLING, 2, false, "wrong", "accept")
+        repository.saveAnswer(sessionId, wordId, STAGE_SPELLING, 3, true, "accept", "accept")
+        val corrected = db.memoryStateDao().getState(wordId, MEMORY_SPELLING)!!
+        assertEquals(1, corrected.lapseCount)
+        assertEquals(0, corrected.successStreak)
+        assertEquals(first.dueAt, corrected.dueAt)
+        assertEquals(first.easeFactor, corrected.easeFactor, 0.001)
+        assertEquals(3, db.reviewResultDao().getResultsBySession(sessionId).size)
+
+        repository.finishSession(sessionId, ReviewSummary(1, 1, 0, 3, 2))
+        repository.saveAnswer(insertSession(), wordId, STAGE_SPELLING, 1, true, "accept", "accept")
+        assertEquals(1, db.memoryStateDao().getState(wordId, MEMORY_SPELLING)?.successStreak)
     }
 
     @Test

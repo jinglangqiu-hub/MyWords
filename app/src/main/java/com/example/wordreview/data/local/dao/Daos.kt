@@ -41,9 +41,19 @@ interface WordDao {
 interface WordLibraryDao {
     @Query(
         """
-        SELECT l.id, l.name, COUNT(lw.wordId) AS wordCount, l.updatedAt
+        SELECT l.id, l.name, COUNT(lw.wordId) AS wordCount, l.updatedAt,
+            SUM(CASE WHEN TRIM(lw.meaningText) != '' THEN 1 ELSE 0 END) AS reviewableCount,
+            SUM(CASE WHEN TRIM(lw.meaningText) != '' AND
+                (r.lastReviewedAt IS NOT NULL OR s.lastReviewedAt IS NOT NULL)
+                THEN 1 ELSE 0 END) AS startedCount,
+            SUM(CASE WHEN TRIM(lw.meaningText) != '' AND r.successStreak > 0 AND
+                (w.spellingDisabled = 1 OR s.successStreak > 0)
+                THEN 1 ELSE 0 END) AS learnedCount
         FROM word_libraries l
         LEFT JOIN library_words lw ON lw.libraryId = l.id
+        LEFT JOIN words w ON w.id = lw.wordId
+        LEFT JOIN memory_states r ON r.wordId = lw.wordId AND r.type = 'recognition'
+        LEFT JOIN memory_states s ON s.wordId = lw.wordId AND s.type = 'spelling'
         GROUP BY l.id
         ORDER BY l.updatedAt DESC, l.name COLLATE NOCASE ASC
         """
@@ -227,6 +237,9 @@ interface ReviewResultDao {
 
     @Query("SELECT * FROM review_results WHERE sessionId = :sessionId AND stage = :stage AND roundIndex = :roundIndex AND wordId = :wordId LIMIT 1")
     suspend fun getAnswer(sessionId: Long, stage: String, roundIndex: Int, wordId: Long): ReviewResultEntity?
+
+    @Query("SELECT EXISTS(SELECT 1 FROM review_results WHERE sessionId = :sessionId AND stage = :stage AND wordId = :wordId AND roundIndex != :roundIndex)")
+    suspend fun hasOtherRoundAnswer(sessionId: Long, stage: String, roundIndex: Int, wordId: Long): Boolean
 
     @Query("DELETE FROM review_results WHERE sessionId = :sessionId")
     suspend fun deleteBySession(sessionId: Long)

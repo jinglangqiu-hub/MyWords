@@ -6,6 +6,8 @@ import com.example.wordreview.data.local.entity.WordEntity
 import java.nio.ByteBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
+import java.text.Normalizer
+import java.util.Locale
 import kotlin.math.max
 import kotlin.random.Random
 
@@ -42,8 +44,10 @@ data class ReviewWord(
 
 data class ChoiceQuestion(
     val word: ReviewWord,
-    val options: List<String>
+    val options: List<ChoiceOption>
 )
+
+data class ChoiceOption(val meaning: String, val displayTerm: String)
 
 data class SpellingQuestion(
     val word: ReviewWord
@@ -54,7 +58,8 @@ data class ReviewSummary(
     val choiceRounds: Int,
     val choiceMistakes: Int,
     val spellingRounds: Int,
-    val spellingMistakes: Int
+    val spellingMistakes: Int,
+    val deferredSpellingCount: Int = 0
 )
 
 object WordNormalizer {
@@ -160,14 +165,24 @@ object CsvParser {
 
 object ReviewScheduler {
     fun pick(words: List<LibraryWordEntry>, states: List<MemoryStateEntity>, count: Int, now: Long): List<ReviewWord> {
-        val stateByWord = states.associateBy { it.wordId }
+        val statesByWord = states.groupBy { it.wordId }
+        fun relevantStates(word: LibraryWordEntry) = statesByWord[word.wordId].orEmpty()
+            .filter { it.type == MEMORY_RECOGNITION || (!word.spellingDisabled && it.type == MEMORY_SPELLING) }
+        // Due/new words come first. Within each group rotate by last exposure,
+        // so a historic lapse cannot monopolize successive sessions.
+        fun lastReviewed(word: LibraryWordEntry) = relevantStates(word).mapNotNull { it.lastReviewedAt }.maxOrNull()
+        fun dueAt(word: LibraryWordEntry): Long {
+            val relevant = relevantStates(word)
+            val expected = if (word.spellingDisabled) 1 else 2
+            return if (relevant.size < expected) 0L else relevant.minOf { it.dueAt }
+        }
         return words
+            .filter { lastReviewed(it) == null || dueAt(it) <= now }
             .sortedWith(
-                compareByDescending<LibraryWordEntry> { word ->
-                    val state = stateByWord[word.wordId]
-                    val dueBoost = if (state == null || state.dueAt <= now) 1_000_000L else 0L
-                    dueBoost + (state?.lapseCount ?: 0) * 10_000L - (state?.successStreak ?: 0) * 1_000L
-                }.thenBy { it.updatedAt }
+                compareBy<LibraryWordEntry> { lastReviewed(it) ?: Long.MIN_VALUE }
+                    .thenBy { dueAt(it) }
+                    .thenBy { it.addedAt }
+                    .thenBy { it.wordId }
             )
             .take(count)
             .map { it.toReviewWord() }
@@ -182,23 +197,22 @@ object ChoiceOptionGenerator {
     fun prepareDistractors(
         words: List<ReviewWord>,
         allWords: List<LibraryWordEntry>
-    ): Map<Long, List<String>> {
+    ): Map<Long, List<ChoiceOption>> {
         val candidates = prepareCandidates(allWords)
         return words.distinctBy { it.id }.associate { word ->
             word.id to findDistractors(word, candidates)
         }
     }
 
-    fun makePreparedQuestion(word: ReviewWord, distractors: List<String>): ChoiceQuestion? {
+    fun makePreparedQuestion(word: ReviewWord, distractors: List<ChoiceOption>): ChoiceQuestion? {
         val correctMeaning = word.meaningText.trim()
         if (correctMeaning.isBlank()) return null
         val distinctDistractors = distractors
-            .map { it.trim() }
-            .filter { it.isNotBlank() && it != correctMeaning }
-            .distinct()
+            .filter { it.meaning.isNotBlank() && !meaningsOverlap(it.meaning, correctMeaning) }
+            .distinctBy { meaningParts(it.meaning) }
             .take(2)
-        if (distinctDistractors.size < 2) return null
-        return ChoiceQuestion(word, (distinctDistractors + correctMeaning).shuffled())
+        if (distinctDistractors.isEmpty()) return null
+        return ChoiceQuestion(word, (distinctDistractors + ChoiceOption(correctMeaning, word.displayTerm)).shuffled())
     }
 
     private fun prepareCandidates(allWords: List<LibraryWordEntry>): List<PreparedCandidate> =
@@ -206,7 +220,10 @@ object ChoiceOptionGenerator {
             PreparedCandidate(
                 wordId = candidate.wordId,
                 meaning = candidate.meaningText.trim(),
+                displayTerm = candidate.displayTerm,
                 normalizedTerm = candidate.normalizedTerm,
+                familyRoots = familyRoots(candidate.normalizedTerm),
+                meaningParts = meaningParts(candidate.meaningText),
                 comparableTerm = ComparableTerm.from(candidate.normalizedTerm)
             )
         }
@@ -214,19 +231,27 @@ object ChoiceOptionGenerator {
     private fun findDistractors(
         word: ReviewWord,
         candidates: List<PreparedCandidate>
-    ): List<String> {
+    ): List<ChoiceOption> {
         val correctMeaning = word.meaningText.trim()
         if (correctMeaning.isBlank()) return emptyList()
         val targetTerm = ComparableTerm.from(word.normalizedTerm)
-        return candidates
+        val targetRoots = familyRoots(word.normalizedTerm)
+        val targetMeanings = meaningParts(correctMeaning)
+        val ranked = candidates
             .asSequence()
-            .filter { it.wordId != word.id && it.meaning.isNotBlank() && it.meaning != correctMeaning }
+            .filter {
+                it.wordId != word.id && it.meaning.isNotBlank() &&
+                    it.comparableTerm.value != targetTerm.value &&
+                    it.familyRoots.none { root -> root in targetRoots } &&
+                    !meaningsOverlap(it.meaningParts, targetMeanings)
+            }
             .groupBy { it.meaning }
             .map { (_, candidates) ->
                 candidates
                     .map { candidate ->
                         RankedDistractor(
                             meaning = candidate.meaning,
+                            displayTerm = candidate.displayTerm,
                             normalizedTerm = candidate.normalizedTerm,
                             score = similarityScore(targetTerm, candidate.comparableTerm)
                         )
@@ -237,14 +262,65 @@ object ChoiceOptionGenerator {
                 compareByDescending<RankedDistractor> { it.score }
                     .thenBy { it.normalizedTerm }
             )
-            .take(2)
-            .map { it.meaning }
+        val selected = mutableListOf<ChoiceOption>()
+        for (candidate in ranked) {
+            if (selected.none { meaningsOverlap(it.meaning, candidate.meaning) }) {
+                selected += ChoiceOption(candidate.meaning, candidate.displayTerm)
+                if (selected.size == 2) break
+            }
+        }
+        return selected
     }
+
+    // Conservative local heuristics: CSV data has no dictionary sense IDs.
+    // Reject likely inflections/derivations instead of using them as traps.
+    private fun familyRoots(term: String): Set<String> {
+        val value = comparisonTerm(term)
+        val roots = mutableSetOf(value)
+        if (value.length > 4 && value.endsWith("e")) roots += value.dropLast(1)
+        if (value.length > 4 && value.endsWith("y")) roots += value.dropLast(1)
+        val suffixes = listOf("ization", "isation", "ation", "ition", "ness", "ment", "able", "ible",
+            "ical", "ally", "ing", "ied", "ies", "ity", "ive", "ous", "ful", "less", "ial", "ion", "ly", "ed", "es", "er", "or", "al", "ic", "s")
+        for (suffix in suffixes) {
+            if (!value.endsWith(suffix) || value.length - suffix.length < 3) continue
+            val root = value.dropLast(suffix.length)
+            roots += root
+            roots += root + "e"
+            if (suffix == "ation") {
+                roots += root + "ate"
+                roots += root + "at"
+            }
+            if (root.endsWith("i")) roots += root.dropLast(1) + "y"
+            if (root.length > 3 && root.last() == root[root.lastIndex - 1]) roots += root.dropLast(1)
+        }
+        return roots
+    }
+
+    private val partOfSpeech = Regex("(?i)(?<![a-z])(?:adj|adv|noun|verb|adjective|adverb|pron|prep|conj|interj|vt|vi|n|v|a)\\s*\\.")
+    private val annotation = Regex("[（(][^）)]*[）)]")
+    private val meaningSeparator = Regex("[;；,，、/\\n。]")
+    private fun meaningParts(meaning: String): Set<String> =
+        partOfSpeech.replace(Normalizer.normalize(meaning, Normalizer.Form.NFKC).lowercase(Locale.ROOT), " ")
+            .replace(annotation, " ")
+            .split(meaningSeparator)
+            .map { part -> part.filter { it.isLetterOrDigit() }.trimEnd('的', '地') }
+            .filter { it.isNotEmpty() }.toSet()
+
+    private fun meaningsOverlap(left: String, right: String): Boolean =
+        meaningsOverlap(meaningParts(left), meaningParts(right))
+
+    private fun meaningsOverlap(left: Set<String>, right: Set<String>): Boolean =
+        left.any { a -> right.any { b ->
+            a == b || (minOf(a.length, b.length) >= 2 && (a.contains(b) || b.contains(a)))
+        } }
 
     private data class PreparedCandidate(
         val wordId: Long,
         val meaning: String,
+        val displayTerm: String,
         val normalizedTerm: String,
+        val familyRoots: Set<String>,
+        val meaningParts: Set<String>,
         val comparableTerm: ComparableTerm
     )
 
@@ -259,6 +335,7 @@ object ChoiceOptionGenerator {
 
     private data class RankedDistractor(
         val meaning: String,
+        val displayTerm: String,
         val normalizedTerm: String,
         val score: Int
     )
@@ -352,6 +429,13 @@ object MemoryUpdater {
             )
         }
     }
+}
+
+object SpellingRetryPolicy {
+    const val MAX_ROUNDS = 3
+
+    fun nextRound(wrongIds: List<Long>, roundIndex: Int): List<Long> =
+        if (roundIndex < MAX_ROUNDS) wrongIds.distinct() else emptyList()
 }
 
 fun WordEntity.toReviewWord(): ReviewWord =

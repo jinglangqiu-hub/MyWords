@@ -35,6 +35,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -528,6 +529,7 @@ private fun LibraryListScreen(
                             Text(library.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                             Text("${library.wordCount} 个单词", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        LibraryProgress(library)
                         Button(onClick = { onOpen(library.id) }, modifier = Modifier.actionButton()) { Text("查看") }
                         Button(
                             onClick = { onImport(library.id) },
@@ -609,8 +611,10 @@ private fun ImportScreen(vm: AppViewModel, onBack: () -> Unit) {
 @Composable
 private fun LibraryScreen(vm: AppViewModel, onBack: () -> Unit, onImport: () -> Unit, onDetail: (Long) -> Unit) {
     val state by vm.library.collectAsStateWithLifecycle()
+    val libraries by vm.libraryList.collectAsStateWithLifecycle()
     Page(state.libraryName.ifBlank { "单词库" }, onBack) { modifier ->
         Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            libraries.libraries.firstOrNull { it.id == state.libraryId }?.let { LibraryProgress(it) }
             Button(
                 onClick = onImport,
                 modifier = Modifier.actionButton(),
@@ -679,7 +683,7 @@ private fun ReviewSetupScreen(vm: AppViewModel, onBack: () -> Unit, onChoice: ()
     var expanded by remember { mutableStateOf(false) }
     val selectedName = state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.name ?: "请选择词库"
     Page("复习设置", onBack) { modifier ->
-        Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
                 "本次学习词库",
                 style = MaterialTheme.typography.labelLarge,
@@ -703,6 +707,9 @@ private fun ReviewSetupScreen(vm: AppViewModel, onBack: () -> Unit, onChoice: ()
                 }
             }
             Text("当前词库：${state.wordCount} 个单词", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("复习数量为上限，仅安排新词和到期词。", style = MaterialTheme.typography.bodySmall)
+            state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.let { LibraryProgress(it) }
+            Text("拼写错词最多巩固 2 轮；仍未通过的词保留为待巩固，次日再练。", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
                 value = state.plannedCountInput,
                 onValueChange = vm::updatePlannedCount,
@@ -731,15 +738,17 @@ private fun ChoiceScreen(
     val ttsDiagnostics by tts.diagnostics.collectAsStateWithLifecycle()
     val question = state.currentQuestion
     var ttsMessage by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(question?.word?.id) {
+    LaunchedEffect(question?.word?.id, state.roundIndex, state.currentIndex) {
         ttsMessage = null
-        question?.word?.displayTerm?.let { tts.speak(it) }
+        question?.word?.displayTerm?.let {
+            if (!tts.speak(it)) ttsMessage = ttsStatusMessage(tts.status.value, tts.diagnostics.value)
+        }
     }
     Page("选择题") { modifier ->
         if (question == null) {
-            Text("题目生成失败，请确认词库至少有 3 个不同释义。", modifier)
+            Text("题目生成失败，请补充释义差异较大的单词。", modifier)
         } else {
-            Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
                     "第 ${state.roundIndex} 轮  ${state.currentIndex + 1} / ${state.totalInRound}",
                     modifier = Modifier.fillMaxWidth(),
@@ -767,21 +776,32 @@ private fun ChoiceScreen(
                 ttsMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 question.options.forEach { option ->
                     OutlinedButton(
-                        onClick = { vm.answerChoice(option) },
+                        onClick = { vm.answerChoice(option.meaning) },
                         enabled = !state.isAnswered,
                         modifier = Modifier.actionButton(),
                         colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = if (state.selectedOption == option) {
+                            containerColor = if (state.selectedOption == option.meaning) {
                                 MaterialTheme.colorScheme.secondaryContainer
                             } else {
                                 MaterialTheme.colorScheme.surface
                             },
-                            contentColor = MaterialTheme.colorScheme.onSurface
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                            disabledContentColor = MaterialTheme.colorScheme.onSurface,
+                            disabledContainerColor = when {
+                                option.meaning == state.correctAnswer -> MaterialTheme.colorScheme.primaryContainer
+                                option.meaning == state.selectedOption -> MaterialTheme.colorScheme.secondaryContainer
+                                else -> MaterialTheme.colorScheme.surface
+                            }
                         )
                     ) {
                         Row(Modifier.fillMaxWidth()) {
-                            RadioButton(selected = state.selectedOption == option, onClick = null, enabled = false)
-                            Text(option, modifier = Modifier.padding(top = 12.dp))
+                            RadioButton(selected = state.selectedOption == option.meaning, onClick = null, enabled = false)
+                            Column(Modifier.weight(1f).padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(option.meaning)
+                                if (state.isAnswered && option.meaning != question.word.meaningText.trim()) {
+                                    Text(option.displayTerm, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     }
                 }
@@ -809,9 +829,11 @@ private fun SpellingScreen(
     val ttsDiagnostics by tts.diagnostics.collectAsStateWithLifecycle()
     val question = state.currentQuestion
     var ttsMessage by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(question?.word?.id) {
+    LaunchedEffect(question?.word?.id, state.roundIndex, state.currentIndex) {
         ttsMessage = null
-        question?.word?.displayTerm?.let { tts.speak(it) }
+        question?.word?.displayTerm?.let {
+            if (!tts.speak(it)) ttsMessage = ttsStatusMessage(tts.status.value, tts.diagnostics.value)
+        }
     }
     Page("拼写题") { modifier ->
         if (question == null) {
@@ -963,14 +985,34 @@ private fun SpellingKey(
 private fun ResultScreen(vm: AppViewModel, onDone: () -> Unit) {
     val summary by vm.summary.collectAsStateWithLifecycle()
     Page("复习结果") { modifier ->
-        Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SummaryLine("复习单词数", summary.actualCount)
             SummaryLine("选择题轮数", summary.choiceRounds)
             SummaryLine("选择题错误次数", summary.choiceMistakes)
             SummaryLine("拼写题轮数", summary.spellingRounds)
             SummaryLine("拼写错误次数", summary.spellingMistakes)
+            if (summary.deferredSpellingCount > 0) {
+                SummaryLine("留待次日巩固", summary.deferredSpellingCount)
+                Text("这些词仍标记为待巩固，将按短间隔安排复习。")
+            }
             Button(onClick = onDone, modifier = Modifier.actionButton()) { Text("完成") }
         }
+    }
+}
+
+@Composable
+private fun LibraryProgress(library: WordLibrarySummary) {
+    val total = library.reviewableCount
+    val progress = if (total == 0) 0f else library.learnedCount.toFloat() / total
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("学习进度：${library.learnedCount} / $total（${(progress * 100).toInt()}%）", style = MaterialTheme.typography.bodyMedium)
+        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+        Text(
+            "未学 ${total - library.startedCount} · 待巩固 ${library.startedCount - library.learnedCount}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text("识别与拼写均通过计入进度；不拼写的词仅需识别通过。跨词库共享。", style = MaterialTheme.typography.bodySmall)
     }
 }
 

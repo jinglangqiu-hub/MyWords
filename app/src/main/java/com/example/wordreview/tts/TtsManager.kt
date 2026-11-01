@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.media.AudioAttributes
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
@@ -114,6 +115,7 @@ class TtsManager(context: Context) {
     private var retryAllowed = true
     private var compatibilityMode = false
     private var initializationGeneration = 0L
+    private var startTimeout: Runnable? = null
 
     private val _status = MutableStateFlow(TtsStatus.INITIALIZING)
     val status: StateFlow<TtsStatus> = _status.asStateFlow()
@@ -156,6 +158,9 @@ class TtsManager(context: Context) {
             return
         }
         engine.setOnUtteranceProgressListener(createProgressListener())
+        engine.setAudioAttributes(AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
         val voices = runCatching { engine.voices.orEmpty() }.getOrDefault(emptySet())
 
         // Compatibility comes first: let the phone's selected TTS engine choose its
@@ -225,31 +230,52 @@ class TtsManager(context: Context) {
         return when (_status.value) {
             TtsStatus.INITIALIZING -> { pendingText = text; true }
             TtsStatus.READY, TtsStatus.SPEAKING -> speakInternal(text)
+            TtsStatus.SYNTHESIS_FAILED -> { compatibilityMode = true; retryOnce(text); true }
             else -> false
         }
     }
 
     private fun speakInternal(text: String): Boolean {
+        cancelStartTimeout()
         currentText = text
         val requestId = "word_${requestCounter.incrementAndGet()}"
         currentRequestId = requestId
         val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, requestId) ?: TextToSpeech.ERROR_SERVICE
         if (result != TextToSpeech.SUCCESS) {
             handleQueueError(text, result)
-            return false
+            return _status.value == TtsStatus.INITIALIZING
         }
+        // SUCCESS only means queued. Some engines silently drop the request;
+        // recover once if no start/done/error callback arrives.
+        startTimeout = Runnable {
+            if (currentRequestId == requestId) {
+                handleQueueError(text, TextToSpeech.ERROR_SERVICE)
+            }
+        }.also { mainHandler.postDelayed(it, 10_000L) }
         return true
     }
 
     private fun createProgressListener() = object : UtteranceProgressListener() {
-        override fun onStart(utteranceId: String) = postForCurrent(utteranceId) { _status.value = TtsStatus.SPEAKING }
-        override fun onDone(utteranceId: String) = postForCurrent(utteranceId) { _status.value = TtsStatus.READY }
+        override fun onStart(utteranceId: String) = postForCurrent(utteranceId) {
+            cancelStartTimeout()
+            _status.value = TtsStatus.SPEAKING
+        }
+        override fun onDone(utteranceId: String) = postForCurrent(utteranceId) {
+            cancelStartTimeout()
+            currentRequestId = null
+            _status.value = TtsStatus.READY
+        }
+        override fun onStop(utteranceId: String, interrupted: Boolean) = postForCurrent(utteranceId) {
+            cancelStartTimeout()
+            currentText?.let { handleQueueError(it, TextToSpeech.ERROR_OUTPUT) }
+        }
         @Deprecated("Deprecated Android callback")
         override fun onError(utteranceId: String) = handleSynthesisError(utteranceId, TextToSpeech.ERROR)
         override fun onError(utteranceId: String, errorCode: Int) = handleSynthesisError(utteranceId, errorCode)
     }
 
     private fun handleSynthesisError(utteranceId: String, errorCode: Int) = postForCurrent(utteranceId) {
+        cancelStartTimeout()
         _diagnostics.value = _diagnostics.value.copy(lastErrorCode = errorCode)
         _status.value = TtsStatus.SYNTHESIS_FAILED
         when {
@@ -300,10 +326,16 @@ class TtsManager(context: Context) {
     }
 
     private fun releaseEngine() {
+        cancelStartTimeout()
+        currentRequestId = null
         tts?.stop()
         tts?.shutdown()
         tts = null
-        currentRequestId = null
+    }
+
+    private fun cancelStartTimeout() {
+        startTimeout?.let(mainHandler::removeCallbacks)
+        startTimeout = null
     }
 
     fun shutdown() {
