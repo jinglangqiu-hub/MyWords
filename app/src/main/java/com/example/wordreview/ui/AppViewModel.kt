@@ -145,6 +145,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private var sessionId: Long = 0L
     private var reviewWords: List<ReviewWord> = emptyList()
+    private var spellingReviewWords: List<ReviewWord> = emptyList()
     private var allWordsCache: List<LibraryWordEntry> = emptyList()
     private var choiceDistractorCache: Map<Long, List<ChoiceOption>> = emptyMap()
     private var libraryWordsJob: Job? = null
@@ -423,6 +424,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val active = reviews.startSession(libraryId, reviewCount)
                 sessionId = active.sessionId
                 reviewWords = active.words
+                spellingReviewWords = active.words.filter { it.id in active.spellingWordIds }
                 allWordsCache = allWords
                 choiceDistractorCache = active.choiceDistractors
                 _summary.value = active.summary
@@ -522,7 +524,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startSpelling(onSpellingReady: () -> Unit) {
-        spellingRoundWords = reviewWords.filterNot { it.spellingDisabled }
+        spellingRoundWords = spellingReviewWords.filterNot { it.spellingDisabled }
         spellingWrongWords = mutableListOf()
         if (spellingRoundWords.isEmpty()) {
             _spelling.value = SpellingState(isPersisting = true, statusMessage = "正在保存复习结果…")
@@ -627,7 +629,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             loadSpellingQuestion()
             return
         }
-        val retryIds = SpellingRetryPolicy.nextRound(spellingWrongWords.map { it.id }, state.roundIndex)
+        val retryIds = SpellingRetryPolicy.nextRound(spellingWrongWords.map { it.id })
         if (retryIds.isNotEmpty()) {
             spellingRoundWords = retryIds.toReviewWords(reviewWords)
             spellingWrongWords = mutableListOf()
@@ -639,7 +641,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             loadSpellingQuestion()
             return
         }
-        _summary.update { it.copy(spellingRounds = state.roundIndex, deferredSpellingCount = spellingWrongWords.distinctBy { word -> word.id }.size) }
+        _summary.update { it.copy(spellingRounds = state.roundIndex) }
         onDone()
     }
 
@@ -664,6 +666,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadActiveSession(active: ReviewRepository.ActiveSession): Boolean {
         sessionId = active.sessionId
         reviewWords = active.words
+        spellingReviewWords = active.words.filter { it.id in active.spellingWordIds }
         allWordsCache = words.allWords(active.libraryId)
         choiceDistractorCache = withContext(Dispatchers.Default) {
             ChoiceOptionGenerator.prepareDistractors(active.words, allWordsCache)
@@ -694,7 +697,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
             loadSpellingQuestion()
         } else {
-            spellingRoundWords = active.words.filterNot { it.spellingDisabled }
+            spellingRoundWords = spellingReviewWords.filterNot { it.spellingDisabled }
             spellingWrongWords = mutableListOf()
             _spelling.value = SpellingState(roundIndex = 1, totalInRound = spellingRoundWords.size)
             loadSpellingQuestion()
@@ -730,7 +733,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             else -> {
                 val nextSummary = summaryAfterAnswer.copy(choiceRounds = answeredState.roundIndex)
                 _summary.value = nextSummary
-                val spellingIds = reviewWords.filterNot { it.spellingDisabled }.map { it.id }
+                val spellingIds = spellingReviewWords.filterNot { it.spellingDisabled }.map { it.id }
                 if (spellingIds.isEmpty()) {
                     reviews.finishSession(sessionId, nextSummary)
                 } else {
@@ -759,7 +762,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 )
             }
-            SpellingRetryPolicy.nextRound(wrongIdsAfterAnswer, answeredState.roundIndex).isNotEmpty() -> {
+            wrongIdsAfterAnswer.isNotEmpty() -> {
                 reviews.saveProgress(
                     sessionId,
                     STAGE_SPELLING,
@@ -767,7 +770,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             else -> {
-                val nextSummary = summaryAfterAnswer.copy(spellingRounds = answeredState.roundIndex, deferredSpellingCount = wrongIdsAfterAnswer.distinct().size)
+                val nextSummary = summaryAfterAnswer.copy(spellingRounds = answeredState.roundIndex)
                 _summary.value = nextSummary
                 reviews.finishSession(sessionId, nextSummary)
             }
@@ -810,6 +813,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun clearReviewSessionState() {
         sessionId = 0L
         reviewWords = emptyList()
+        spellingReviewWords = emptyList()
         choiceRoundWords = emptyList()
         choiceWrongWords = mutableListOf()
         spellingRoundWords = emptyList()

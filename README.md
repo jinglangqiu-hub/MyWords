@@ -6,11 +6,12 @@ MyWords 是一款原生 Android 本地生词复习应用，面向从 Google 翻�
 
 ## 当前开发状态
 
-最新版本为 **v1.2.0**（`versionCode 5`，数据库版本仍为 3），发布于 **2026-11-01**。可使用正式签名 APK 覆盖升级 v1.1.2，保留原有词库和复习记忆。
+最新版本为 **v1.2.1**（`versionCode 6`，数据库版本仍为 3），发布于 **2026-11-18**。可使用正式签名 APK 覆盖升级 v1.1.2 / v1.2.0，保留原有词库和复习记忆。
 
-### v1.2.0 更新内容
+### v1.2.1 更新内容
 
-- **减少错词反复出现**：仅安排新词和到期词，按最近复习时间轮换；拼写错词最多追加两轮巩固，仍未通过的词留待次日复习。同一会话内的纠错不重复增加遗忘次数，也不会快速拉长记忆间隔。
+- **修正错词巩固规则**：撤销 v1.2.0 的拼写轮次上限，本次复习的错词一直巩固到答对（或用户主动设为不再拼写）。断点恢复也遵循同样规则。
+- **优化后续学习推荐**：仅安排新词和到期词；拼写阶段单独检查拼写记忆的到期时间，不会因为识别阶段到期而强制重复尚未到期的拼写。历史错误次数不产生永久推荐加权；错词在后续独立复习首次答对后，间隔依次增长为 3 天、6 天，再按记忆系数增长；再次首次答错则回到 1 天。
 - **减少释义选项歧义**：过滤常见屈折与派生词族、不同词性标记下的相同释义及重叠义项，再从剩余词中挑选形近词。仅有一个合适干扰项时使用两选项题，完全没有时提示补充词库。
 - **答后显示选项对应单词**：选择后，无论答对或答错，每个干扰项均显示其来源英文；正确释义不额外显示英文。
 - **修复跨轮次自动发音**：同一单词进入下一轮时会重新触发发音，并对引擎接受请求后迟迟没有回调的情况重试一次。
@@ -18,13 +19,13 @@ MyWords 是一款原生 Android 本地生词复习应用，面向从 Google 翻�
 
 | 项目 | 当前情况 |
 | --- | --- |
-| 可安装版本 | [MyWords v1.2.0](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/tag/v1.2.0)，提供正式签名 APK |
+| 可安装版本 | [MyWords v1.2.1](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/tag/v1.2.1)，提供正式签名 APK |
 | 支持系统 | MyWords 最低 Android 8.0（API 26），目标 Android 15（API 35） |
 | 已实现 | 多词库管理与学习进度、按词库导入/更新、词条搜索和释义编辑、双阶段复习、错词巩固、答后选项英文提示、进度恢复/重开/跳过、共享复习记忆、记忆重置、系统 TTS 诊断、软件内置拼写键盘 |
-| 最近验证记录 | 2026-11-01：13 个 JVM 单元测试通过；`lintDebug` 为 0 错误、13 个依赖版本更新提示；Debug、AndroidTest 和正式签名 v1.2.0 Release APK 均已生成，APK 签名验证通过 |
-| 自动化检查范围 | JVM 单元测试覆盖 CSV、调度、干扰项过滤和拼写轮次上限；Android 测试覆盖数据库迁移、记忆重置、幂等保存、纠错间隔、共享词库进度、会话清理和 TTS voice 排序。词库进度 SQL 另在现有 schema 3 的 SQLite 数据库上通过 6 个场景检查 |
+| 最近验证记录 | 2026-11-18：15 个 JVM 单元测试和 10 个 Android 设备测试通过；`lintDebug` 为 0 错误、13 个依赖版本更新提示；Debug、AndroidTest 和正式签名 v1.2.1 Release APK 均已生成，APK 签名验证通过 |
+| 自动化检查范围 | JVM 单元测试覆盖 CSV、调度、干扰项过滤和不限轮次纠错与跨日间隔；Android 测试覆盖数据库迁移、记忆重置、幂等保存、纠错间隔、共享词库进度、会话清理和 TTS voice 排序。词库进度 SQL 另在现有 schema 3 的 SQLite 数据库上通过 6 个场景检查 |
 
-详细检查结果及待完成的真机语音、触控与布局验收见 [v1.2.0 验证记录](verification-1.2.0.md)。Android 设备测试已编译，尚未在设备上实际执行。
+详细检查结果见 [v1.2.1 验证记录](verification-1.2.1.md)。Android 设备测试使用独立测试应用执行，未覆盖安装原应用；真实语音播放、触控与布局仍需人工验收。
 
 ### 已知边界
 
@@ -38,10 +39,10 @@ MyWords 是一款原生 Android 本地生词复习应用，面向从 Google 翻�
 
 ### 直接下载
 
-- 最新版本：[下载 MyWords v1.2.0 APK](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/download/v1.2.0/app-release.apk)
-- 本次发布：[v1.2.0 更新说明](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/tag/v1.2.0)
+- 最新版本：[下载 MyWords v1.2.1 APK](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/download/v1.2.1/app-release.apk)
+- 本次发布：[v1.2.1 更新说明](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/tag/v1.2.1)
 - 全部版本：[GitHub Releases](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases)
-- v1.2.0 APK SHA-256：`9db18c5c79a3fa5b0f7daaa98dbc87e95f50675426d3b58969fbaac5b98bd61a`
+- v1.2.1 APK SHA-256：`f85819c5d76a3ad5d059abf86e2154de2daddd658ddac187559a97886d6c8d9e`
 
 建议从 Releases 页面进入下载，并确认域名和仓库为 `github.com/jinglangqiu-hub/PersonalWordReviewApp`。
 
@@ -141,7 +142,7 @@ MyWords 自身仍然不联网；SherpaTTS 的模型下载和存储由 SherpaTTS 
 
 选择题显示英文和 2～3 个中文释义；选择后，无论正误，两个干扰项（或唯一的干扰项）均显示其对应英文，正确释义不额外显示英文。拼写题显示中文释义，并通过软件内置 QWERTY 键盘输入英文。拼写阶段的输入框为只读，不会拉起系统输入法；键盘支持字母、空格、连字符、撇号、句点、退格和清空。
 
-选择题答错词进入下一轮，答对后退出错词队列。拼写在初始轮后最多追加两轮巩固；第三轮仍错的词留待次日复习，不再无限循环。完成后显示实际复习数量、两个阶段的轮数、错误次数以及留待次日巩固的数量。
+选择题和拼写题的答错词均进入下一轮，直到全部答对；不设置巩固轮次上限。拼写仅安排本次开始时拼写记忆已到期或尚未学习的词（不拼写的词除外）。完成后显示实际复习数量、两个阶段的轮数和错误次数。
 
 ### 中途退出
 
@@ -172,6 +173,8 @@ MyWords 自身仍然不联网；SherpaTTS 的模型下载和存储由 SherpaTTS 
 
 只选择带非空释义的新词和到期词；任一需要的记忆类型缺失或到期即可参与。按最近一次复习时间从早到晚排序（从未复习最先），再按最早到期时间、加入词库时间和词 ID 打破平局，截取用户要求的数量。历史遗忘次数不再产生永久优先级，也不会为了凑数反复抽取未到期词。没有可安排的词时给出提示。
 
+进入拼写阶段时，使用会话开始前的记忆快照，仅纳入拼写到期词和拼写新词。识别阶段的回答、中途退出和重新开始不会改变该会话原定的拼写范围；本次拼写中产生的错词则持续巩固到正确。
+
 ### 3. 记忆更新
 
 初始 `easeFactor = 2.5`，`intervalDays = 0`。
@@ -184,6 +187,8 @@ MyWords 自身仍然不联网；SherpaTTS 的模型下载和存储由 SherpaTTS 
 连续答对 3 次及以后：max(5, floor(旧间隔 × 旧 easeFactor)) 天
 easeFactor = min(3.0, easeFactor + 0.08)
 ```
+
+拼写错词在后续独立复习中恢复答对时，前两次连续正确的间隔改为 3 天、至少 5 天且为上次间隔的两倍（正常为 6 天），之后按上方记忆系数增长。新词和识别记忆保持原有 1 天、3 天的起步规则。
 
 答错时：
 

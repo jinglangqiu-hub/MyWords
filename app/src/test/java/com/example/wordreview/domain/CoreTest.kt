@@ -174,12 +174,41 @@ class CoreTest {
     }
 
     @Test
-    fun spellingRetryQueueDeduplicatesAndStopsAfterTwoReinforcementRounds() {
-        assertEquals(listOf(1L, 2L), SpellingRetryPolicy.nextRound(listOf(1L, 1L, 2L), 1))
-        assertEquals(listOf(2L), SpellingRetryPolicy.nextRound(listOf(2L), 2))
-        assertTrue(SpellingRetryPolicy.nextRound(listOf(2L), 3).isEmpty())
-        assertTrue(SpellingRetryPolicy.nextRound(listOf(2L), 10).isEmpty())
-        assertTrue(SpellingRetryPolicy.nextRound(emptyList(), 1).isEmpty())
+    fun spellingRetriesContinueUntilCorrectWithoutRoundLimit() {
+        var wrongIds = listOf(1L, 1L, 2L)
+        repeat(20) {
+            wrongIds = SpellingRetryPolicy.nextRound(wrongIds)
+            assertEquals(listOf(1L, 2L), wrongIds)
+        }
+        assertEquals(listOf(2L), SpellingRetryPolicy.nextRound(listOf(2L)))
+        assertTrue(SpellingRetryPolicy.nextRound(emptyList()).isEmpty())
+    }
+
+    @Test
+    fun recoveredSpellingLapsesStopBeingRecommendedOnConsecutiveDays() {
+        val day = 86_400_000L
+        val now = 10 * day
+        val word = entry(1, "apple", 1)
+        val recognition = MemoryStateEntity(wordId = 1, type = MEMORY_RECOGNITION, dueAt = Long.MAX_VALUE, lastReviewedAt = now)
+        var spelling = MemoryUpdater.next(null, 1, MEMORY_SPELLING, false, now)
+        assertEquals(1, spelling.intervalDays)
+        assertTrue(ReviewScheduler.pick(listOf(word), listOf(recognition, spelling), 1, now).isEmpty())
+        assertEquals(1, ReviewScheduler.pick(listOf(word), listOf(recognition, spelling), 1, now + day).size)
+        spelling = MemoryUpdater.next(spelling, 1, MEMORY_SPELLING, true, now + day)
+        assertEquals(3, spelling.intervalDays)
+        assertTrue(ReviewScheduler.pick(listOf(word), listOf(recognition, spelling), 1, now + 2 * day).isEmpty())
+        spelling = MemoryUpdater.next(spelling, 1, MEMORY_SPELLING, true, now + 4 * day)
+        assertEquals(6, spelling.intervalDays)
+        assertTrue(ReviewScheduler.pick(listOf(word), listOf(recognition, spelling), 1, now + 5 * day).isEmpty())
+        spelling = MemoryUpdater.next(spelling, 1, MEMORY_SPELLING, false, spelling.dueAt)
+        assertEquals(1, spelling.intervalDays)
+    }
+
+    @Test
+    fun newWordAndRecognitionIntervalsKeepTheirExistingSchedule() {
+        assertEquals(1, MemoryUpdater.next(null, 1, MEMORY_SPELLING, true, 1).intervalDays)
+        val missed = MemoryUpdater.next(null, 1, MEMORY_RECOGNITION, false, 1)
+        assertEquals(1, MemoryUpdater.next(missed, 1, MEMORY_RECOGNITION, true, 2).intervalDays)
     }
 
     private fun entry(id: Long, term: String, updatedAt: Long, meaning: String = "释义$id") = LibraryWordEntry(

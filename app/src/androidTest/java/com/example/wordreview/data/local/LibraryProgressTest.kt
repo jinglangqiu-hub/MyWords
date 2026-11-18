@@ -9,6 +9,8 @@ import com.example.wordreview.data.local.entity.WordEntity
 import com.example.wordreview.data.local.entity.WordLibraryEntity
 import com.example.wordreview.domain.MEMORY_RECOGNITION
 import com.example.wordreview.domain.MEMORY_SPELLING
+import com.example.wordreview.domain.STAGE_CHOICE
+import com.example.wordreview.data.repository.ReviewRepository
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -72,6 +74,25 @@ class LibraryProgressTest {
     private suspend fun library(name: String) = db.wordLibraryDao().insert(
         WordLibraryEntity(name = name, normalizedName = name, createdAt = 1, updatedAt = 1)
     )
+
+    @Test fun spellingDueQueueSurvivesChoiceAnswersResumeAndRestart() = runBlocking {
+        val id = library("review")
+        val apple = word("apple")
+        val banana = word("banana")
+        val crate = word("crate", disabled = true)
+        add(id, apple, "apple meaning")
+        add(id, banana, "banana meaning")
+        add(id, crate, "crate meaning")
+        db.memoryStateDao().insert(MemoryStateEntity(wordId = apple, type = MEMORY_RECOGNITION, dueAt = 0, lastReviewedAt = 1))
+        db.memoryStateDao().insert(MemoryStateEntity(wordId = apple, type = MEMORY_SPELLING, dueAt = Long.MAX_VALUE, successStreak = 2, lastReviewedAt = 1))
+        val repository = ReviewRepository(db)
+        val session = repository.startSession(id, 3)
+        assertEquals(3, session.words.size)
+        assertEquals(setOf(banana), session.spellingWordIds)
+        repository.saveAnswer(session.sessionId, apple, STAGE_CHOICE, 1, true, "apple meaning", "apple meaning")
+        assertEquals(setOf(banana), repository.activeSession()!!.spellingWordIds)
+        assertEquals(setOf(banana), repository.restartActiveSession()!!.spellingWordIds)
+    }
 
     private suspend fun word(term: String, disabled: Boolean = false) = db.wordDao().insert(
         WordEntity(normalizedTerm = term, displayTerm = term, sourceLang = "en", targetLang = "zh",

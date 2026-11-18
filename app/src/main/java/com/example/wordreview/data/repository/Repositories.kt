@@ -238,7 +238,8 @@ class ReviewRepository(private val db: AppDatabase) {
         val choiceProgress: SavedProgress?,
         val spellingProgress: SavedProgress?,
         val summary: ReviewSummary,
-        val choiceDistractors: Map<Long, List<ChoiceOption>> = emptyMap()
+        val choiceDistractors: Map<Long, List<ChoiceOption>> = emptyMap(),
+        val spellingWordIds: Set<Long> = emptySet()
     )
 
     suspend fun activeSession(): ActiveSession? =
@@ -427,11 +428,21 @@ class ReviewRepository(private val db: AppDatabase) {
         val wordsById = db.wordLibraryDao().getWords(session.libraryId).associateBy { it.wordId }
         val reviewWords = wordIds.mapNotNull { wordsById[it]?.toReviewWord() }
         val results = db.reviewResultDao().getResultsBySession(session.id)
+        // Use the pre-session snapshot: answering choice must not change which
+        // spelling memories were due when this session began (also on resume).
+        val spellingSnapshots = db.reviewMemorySnapshotDao().getBySession(session.id)
+            .filter { it.type == MEMORY_SPELLING }.associateBy { it.wordId }
+        val spellingIds = reviewWords.filterNot { it.spellingDisabled }.filter { word ->
+            val snapshot = spellingSnapshots[word.id]
+            snapshot == null || !snapshot.existed || snapshot.lastReviewedAt == null ||
+                (snapshot.dueAt ?: 0L) <= session.startedAt
+        }.map { it.id }.toSet()
         return ActiveSession(
             sessionId = session.id,
             libraryId = session.libraryId,
             currentStage = session.currentStage,
             words = reviewWords,
+            spellingWordIds = spellingIds,
             choiceProgress = db.reviewProgressDao().get(session.id, STAGE_CHOICE)?.toSavedProgress(),
             spellingProgress = db.reviewProgressDao().get(session.id, STAGE_SPELLING)?.toSavedProgress(),
             summary = ReviewSummary(

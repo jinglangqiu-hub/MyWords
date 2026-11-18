@@ -58,8 +58,7 @@ data class ReviewSummary(
     val choiceRounds: Int,
     val choiceMistakes: Int,
     val spellingRounds: Int,
-    val spellingMistakes: Int,
-    val deferredSpellingCount: Int = 0
+    val spellingMistakes: Int
 )
 
 object WordNormalizer {
@@ -407,8 +406,8 @@ object MemoryUpdater {
         return if (isCorrect) {
             val streak = base.successStreak + 1
             val nextInterval = when (streak) {
-                1 -> 1
-                2 -> 3
+                1 -> if (type == MEMORY_SPELLING && base.lapseCount > 0) 3 else 1
+                2 -> if (type == MEMORY_SPELLING && base.lapseCount > 0) max(5, base.intervalDays * 2) else 3
                 else -> max(5, (base.intervalDays * base.easeFactor).toInt())
             }
             base.copy(
@@ -432,10 +431,8 @@ object MemoryUpdater {
 }
 
 object SpellingRetryPolicy {
-    const val MAX_ROUNDS = 3
+    fun nextRound(wrongIds: List<Long>): List<Long> = wrongIds.distinct()
 
-    fun nextRound(wrongIds: List<Long>, roundIndex: Int): List<Long> =
-        if (roundIndex < MAX_ROUNDS) wrongIds.distinct() else emptyList()
 }
 
 fun WordEntity.toReviewWord(): ReviewWord =

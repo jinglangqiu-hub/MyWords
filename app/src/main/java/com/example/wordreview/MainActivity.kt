@@ -709,7 +709,7 @@ private fun ReviewSetupScreen(vm: AppViewModel, onBack: () -> Unit, onChoice: ()
             Text("当前词库：${state.wordCount} 个单词", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("复习数量为上限，仅安排新词和到期词。", style = MaterialTheme.typography.bodySmall)
             state.libraries.firstOrNull { it.id == state.selectedLibraryId }?.let { LibraryProgress(it) }
-            Text("拼写错词最多巩固 2 轮；仍未通过的词保留为待巩固，次日再练。", style = MaterialTheme.typography.bodySmall)
+            Text("拼写仅安排新词和拼写到期词；本次错词持续巩固到正确为止。", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
                 value = state.plannedCountInput,
                 onValueChange = vm::updatePlannedCount,
@@ -991,10 +991,6 @@ private fun ResultScreen(vm: AppViewModel, onDone: () -> Unit) {
             SummaryLine("选择题错误次数", summary.choiceMistakes)
             SummaryLine("拼写题轮数", summary.spellingRounds)
             SummaryLine("拼写错误次数", summary.spellingMistakes)
-            if (summary.deferredSpellingCount > 0) {
-                SummaryLine("留待次日巩固", summary.deferredSpellingCount)
-                Text("这些词仍标记为待巩固，将按短间隔安排复习。")
-            }
             Button(onClick = onDone, modifier = Modifier.actionButton()) { Text("完成") }
         }
     }
