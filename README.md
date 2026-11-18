@@ -19,7 +19,7 @@ MyWords 是一款原生 Android 本地生词复习应用，面向从 Google 翻�
 
 | 项目 | 当前情况 |
 | --- | --- |
-| 可安装版本 | [MyWords v1.2.1](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/tag/v1.2.1)，提供正式签名 APK |
+| 可安装版本 | [MyWords v1.2.1](https://github.com/jinglangqiu-hub/MyWords/releases/tag/v1.2.1)，提供正式签名 APK |
 | 支持系统 | MyWords 最低 Android 8.0（API 26），目标 Android 15（API 35） |
 | 已实现 | 多词库管理与学习进度、按词库导入/更新、词条搜索和释义编辑、双阶段复习、错词巩固、答后选项英文提示、进度恢复/重开/跳过、共享复习记忆、记忆重置、系统 TTS 诊断、软件内置拼写键盘 |
 | 最近验证记录 | 2026-11-18：15 个 JVM 单元测试和 10 个 Android 设备测试通过；`lintDebug` 为 0 错误、13 个依赖版本更新提示；Debug、AndroidTest 和正式签名 v1.2.1 Release APK 均已生成，APK 签名验证通过 |
@@ -39,12 +39,12 @@ MyWords 是一款原生 Android 本地生词复习应用，面向从 Google 翻�
 
 ### 直接下载
 
-- 最新版本：[下载 MyWords v1.2.1 APK](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/download/v1.2.1/app-release.apk)
-- 本次发布：[v1.2.1 更新说明](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases/tag/v1.2.1)
-- 全部版本：[GitHub Releases](https://github.com/jinglangqiu-hub/PersonalWordReviewApp/releases)
+- 最新版本：[下载 MyWords v1.2.1 APK](https://github.com/jinglangqiu-hub/MyWords/releases/download/v1.2.1/app-release.apk)
+- 本次发布：[v1.2.1 更新说明](https://github.com/jinglangqiu-hub/MyWords/releases/tag/v1.2.1)
+- 全部版本：[GitHub Releases](https://github.com/jinglangqiu-hub/MyWords/releases)
 - v1.2.1 APK SHA-256：`f85819c5d76a3ad5d059abf86e2154de2daddd658ddac187559a97886d6c8d9e`
 
-建议从 Releases 页面进入下载，并确认域名和仓库为 `github.com/jinglangqiu-hub/PersonalWordReviewApp`。
+建议从 Releases 页面进入下载，并确认域名和仓库为 `github.com/jinglangqiu-hub/MyWords`。
 
 ### 安装步骤
 
@@ -303,4 +303,4 @@ app/src/main/java/com/example/wordreview/
 └── tts/TtsManager.kt               # 系统 TTS 选择、诊断、发音和重试
 ```
 
-项目仓库：[jinglangqiu-hub/PersonalWordReviewApp](https://github.com/jinglangqiu-hub/PersonalWordReviewApp)
+项目仓库：[jinglangqiu-hub/MyWords](https://github.com/jinglangqiu-hub/MyWords)
